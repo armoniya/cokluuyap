@@ -377,6 +377,23 @@ a.conn-btn.inline{color:var(--ink-soft)}
 .set-opt-body small{font-size:12.5px;color:var(--ink-faint);line-height:1.5}
 #set-status{display:block;margin-top:12px}
 
+/* ── Senkron Kapsamı ── */
+.sk-toolbar{display:flex;align-items:center;gap:14px;margin:20px 0}
+.sk-toolbar .conn-btn{margin-bottom:0}
+.sk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.sk-card{padding:16px 18px}
+.sk-card-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 16px}
+.sk-card-head h3{margin:0;font-size:14.5px;font-weight:600;color:var(--ink)}
+.sk-tumu{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);cursor:pointer}
+.sk-tumu input{accent-color:var(--clay);cursor:pointer}
+.sk-birim-list{display:flex;flex-direction:column;gap:5px;margin-top:12px;max-height:220px;overflow-y:auto}
+.sk-birim{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink);cursor:pointer}
+.sk-birim input{accent-color:var(--sage);cursor:pointer}
+.sk-birim input:disabled{cursor:default}
+.sk-bos{color:var(--ink-faint);font-size:12px}
+.sk-yenile{margin-top:10px;padding:0}
+@media (max-width:900px){.sk-grid{grid-template-columns:1fr}}
+
 /* ── İcra · Dosyalarım ── */
 .icra-criteria{margin:6px 0 14px;padding:14px 16px}
 .icra-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}

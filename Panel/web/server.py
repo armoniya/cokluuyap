@@ -148,6 +148,10 @@ SGK_BATCHES = {}      # token -> {"batch": SgkBatch, "dir": tempdir, "path": yü
 _icra = None
 _icra_err = None
 ICRA_JOBS = {}        # token -> IcraJob (oturum başına sorgu durumu)
+# Çoklu Yargı Türü — Senkron Kapsamı çekirdeği (GUI ile aynı dosya_core mantığını
+# sarmalar; bkz. docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §7/§8).
+_dosya = None
+_dosya_err = None
 # Masaüstü IcraDosyalarimPanel ile AYNI sabit 7 kolon (icra_core._kolonlar eşi).
 ICRA_COLUMNS = ['alacakli', 'borclu', 'birimAdi', 'dosyaYil', 'dosyaNo', 'dosyaTur', 'acilisTarihi']
 
@@ -161,7 +165,7 @@ CONTENT_TYPES = {
 
 def _load_auth():
     """Orijinal login modülünü (uyap_app) ve modül çekirdeklerini arka planda yükle."""
-    global _auth, _auth_err, _udf, _udf_err, _sgk, _sgk_err, _icra, _icra_err
+    global _auth, _auth_err, _udf, _udf_err, _sgk, _sgk_err, _icra, _icra_err, _dosya, _dosya_err
     try:
         import uyap_app
         _auth = uyap_app
@@ -191,6 +195,13 @@ def _load_auth():
     except Exception as e:
         _icra_err = str(e)
         print("[web] Icra Dosyalarim modulu yuklenemedi:", e)
+    try:
+        import dosya_core
+        _dosya = dosya_core
+        print("[web] Senkron Kapsami modulu hazir")
+    except Exception as e:
+        _dosya_err = str(e)
+        print("[web] Senkron Kapsami modulu yuklenemedi:", e)
     # Kayıtlı kimlik + PIN varsa paylaşım/alım açılışta kendiliğinden başlar
     # (masaüstü uygulama ya da panel girişi GEREKMEZ — "kur-unut" ofis ajanı).
     boot_autoconnect()
@@ -753,6 +764,58 @@ def icra_units():
         return sorted(set(_icra.birim_adlari()), key=lambda s: s.lower())
     except Exception:
         return []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Senkron Kapsamı — masaüstü Panel/modules/senkron_kapsami.py ile AYNI dosya_core
+# çekirdeğini ve AYNI SenkronKapsami/YargiBirimi tablolarını paylaşır (bkz.
+# docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §7/§8). Ağa gitmeden DB önbelleğini
+# okur; canlı yenileme AYRI bir uç noktadan tetiklenir (8 yargı türünün tümünü
+# her GET'te canlı çekmek sayfa açılışını yavaşlatır).
+# ─────────────────────────────────────────────────────────────────────────────
+def senkron_kapsami_durumu():
+    """Ayar ekranı için tam anlık görüntü: yargı türleri sabit listesi + DB'deki
+    Yargı Birimi önbelleği (yargi_turu -> liste) + mevcut SenkronKapsami seçimi."""
+    if _dosya is None:
+        return {"ready": False, "err": _dosya_err}
+    turler = [{"kod": k, "ad": a} for k, a in _dosya.YARGI_TURLERI]
+    birimler = {}
+    for kod, _ad in _dosya.YARGI_TURLERI:
+        try:
+            birimler[str(kod)] = _dosya.yargi_birimleri_db_den_yukle(kod)
+        except Exception:
+            birimler[str(kod)] = []
+    try:
+        secili = _dosya.senkron_kapsami_durumu_getir()
+    except Exception:
+        secili = []
+    return {"ready": True, "turler": turler, "birimler": birimler, "secili": secili}
+
+
+def senkron_kapsami_yenile(yargi_turu):
+    """Bir yargı türünün Yargı Birimi listesini canlı UYAP'tan çeker (DB'ye
+    upsert eder) — masaüstü '↻ Listeyi UYAP'tan Getir/Yenile' eşi."""
+    if _dosya is None:
+        return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil."}
+    try:
+        birimler = _dosya.yargi_birimleri_getir(yargi_turu, lambda *a, **k: None)
+        return {"ok": True, "birimler": birimler}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
+def senkron_kapsami_kaydet_web(secimler):
+    """Ayar ekranından gelen [[yargi_turu, yargi_birimi_kod], ...] listesini
+    kaydeder (dosya_core.senkron_kapsami_kaydet — replace-all semantik: listede
+    olmayan var olan kayıtlar silinmez, yalnız aktif=False yapılır)."""
+    if _dosya is None:
+        return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil."}
+    try:
+        temiz = [(int(t), str(k or "")) for t, k in (secimler or [])]
+        _dosya.senkron_kapsami_kaydet(temiz)
+        return {"ok": True, "kayit": len(temiz)}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
 
 
 def _icra_birlestir(db_kayitlar, canli):
@@ -1625,6 +1688,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"error": "oturum yok"})
                 return
             self._json(200, {"units": icra_units()})
+        elif path == "/api/senkron-kapsami":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            self._json(200, senkron_kapsami_durumu())
+        elif path == "/api/senkron-kapsami/yenile":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                yargi_turu = int(q.get("yargi_turu", ["-1"])[0])
+            except Exception:
+                yargi_turu = -1
+            self._json(200, senkron_kapsami_yenile(yargi_turu))
         elif path == "/api/icra/status":
             if not self._user():
                 self._json(401, {"error": "oturum yok"})
@@ -1762,6 +1840,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "msg": "oturum yok"})
                 return
             self._json(200, set_settings(self._body()))
+        elif path == "/api/senkron-kapsami":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            body = self._body()
+            self._json(200, senkron_kapsami_kaydet_web(body.get("secimler") or []))
         elif path.startswith("/api/conn/"):
             sess = self._session()
             if not sess:

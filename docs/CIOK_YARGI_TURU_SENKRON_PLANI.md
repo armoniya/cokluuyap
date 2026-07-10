@@ -314,10 +314,62 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
   **Sınırlama:** bu makinede PostgreSQL ikilikleri kurulu değil; doğrulama
   yalnızca `manage.py check` + kod incelemesiyle yapıldı, `YargiBirimi` upsert
   ve `DosyaSorgu.calistir` akışı CANLI DB'ye karşı henüz TEST EDİLMEDİ.
-- **Kalan (henüz yapılmadı):** `SenkronKapsami` seçim arayüzü (Panel/web —
-  kullanıcının yargı türü/birimi kombinasyonlarını işaretlediği ekran),
-  dosya listesi filtre UI'ı (yargı türü/birimi/dosya türü/durumu/açılış
-  tarihi aralığı), "Dosya Görüntüle" tıklanınca `dosyaAyrintiBilgileri_brd.ajx`
+- **Faz 3 (çift arayüz — masaüstü Tkinter + web) — TAMAMLANDI.** Kullanıcı
+  isteği (2026-07-10): "hem Django hem ofisteki tkinter arayüzünde bu
+  listeleme ve indirme ayarı olsun." Önce mimari araştırıldı (bkz. altı) ve
+  iki açık soru kullanıcıya soruldu/karara bağlandı, SONRA kod yazıldı:
+  - **Mimari (araştırmayla doğrulandı, tartışmasız):** `Panel/panel.py`
+    (Tkinter) ve `Panel/web/server.py` (çıplak `http.server`, Django DEĞİL)
+    AYNI `models/icra_models` Django ORM'ini, AYNI DB'yi, proses-içi
+    `import` ile paylaşıyor — aralarında HTTP API YOK. Yani `dosya_core.py`
+    tek bir "headless motor" olarak HER İKİ arayüzden de doğrudan
+    çağrılabiliyor; ayrı bir backend katmanı gerekmedi.
+  - **"Listeleme" ile "indirme" AYNI kapsam mı?** Evet — doğrulandı
+    (`icra_dosyalarim.py:551-559,713-729`): dosya listesi önce YEREL DB'den
+    gösterilir (`db_dosyalari_getir`), sonra canlı UYAP'tan güncellenir.
+    Yani DB'ye ne girerse (= `SenkronKapsami` neyi kapsıyorsa) listede o
+    görünür — ayrı bir "listeleme kapsamı" kavramına gerek yok, TEK ayar
+    ekranı hem taramayı hem dolayısıyla listelemeyi kapsıyor.
+  - **"Tüm tür" (yargı birimi belirtmeden, örn. tüm Hukuk mahkemeleri)
+    seçilebilir mi? KARARLAŞTIRILDI (kullanıcı onayı, 2026-07-10): EVET,
+    olsun.** Bu nedenle Faz 2'deki yarım/atlanan "hepsi" desteği
+    TAMAMLANDI: `DosyaSorgu._gorevleri_genislet` artık boş
+    `yargi_birimi_kod`'u önce DB önbelleğinden (`yargi_birimleri_db_den_yukle`),
+    yoksa canlı `yargi_birimleri_getir` ile genişletiyor; genişletilemezse
+    (Yargı Birimi listesi de yoksa) o kapsam log ile bildirilip atlanıyor —
+    artık sessizce atlamıyor.
+  - **Yeni `dosya_core.py` fonksiyonları:** `yargi_birimleri_db_den_yukle`
+    (ağa gitmeden DB önbelleği okur), `senkron_kapsami_durumu_getir` (ayar
+    ekranının mevcut işaretli durumu için TÜM kayıtları — aktif/pasif —
+    döner), `senkron_kapsami_kaydet` (replace-all semantik: listede
+    olmayanlar SİLİNMEZ, yalnız `aktif=False` yapılır).
+  - **Tkinter:** `Panel/modules/senkron_kapsami.py` (yeni,
+    `SenkronKapsamiPanel`) — `ayarlar.py`/`icra_dosyalarim.py` desenleri
+    (kart+checkbox, `queue`+`threading`+`app.after` polling). `panel.py`
+    `CEKIRDEK_NAV`'a eklendi (her zaman görünür, "Ayarlar" gibi çekirdek —
+    Mağaza'dan satın alınan bir özellik değil).
+  - **Web:** `Panel/web/server.py`'ye `_dosya` modül global'i +
+    `senkron_kapsami_durumu`/`senkron_kapsami_yenile`/`senkron_kapsami_kaydet_web`
+    + `GET/POST /api/senkron-kapsami` + `GET /api/senkron-kapsami/yenile`
+    (tek bir türün listesini canlı yenilemek için, ayrı uç — 8 türü her
+    sayfa açılışında canlı çekmek yavaş olurdu). `static/senkron_kapsami.js`
+    (yeni) + `index.html`'e `data-panel="senkron_kapsami"` bölümü +
+    `app.js` CORE listesine eklendi. Bir türün listesini yenilemek yalnız O
+    KARTI günceller (tam grid yeniden çizilmiyor) — kullanıcının diğer
+    kartlardaki kaydedilmemiş işaretlemeleri kaybolmasın diye.
+  - **Doğrulama:** `py_compile` + `node --check` (JS) + izole fonksiyon
+    testleri (DB yoksa zarifçe `[]`/hata mesajı dönüyor) temiz. **DİKKAT:**
+    `server._load_auth()` test amacıyla ASLA çağrılmasın — içindeki
+    `boot_autoconnect()` auto_connect ayarı kayıtlıysa GERÇEK e-imza UYAP
+    girişini tetikler (bkz. bellek: server-load-auth-canli-giris-tuzagi).
+    Canlı DB'ye karşı tam uçtan uca test (Postgres bu makinede kurulu değil)
+    hâlâ YAPILMADI.
+
+- **Kalan (henüz yapılmadı):** dosya listesi filtre UI'ı (yargı
+  türü/birimi/dosya türü/durumu/açılış tarihi aralığı — hem Tkinter hem
+  web'de), "Dosya Görüntüle" tıklanınca `dosyaAyrintiBilgileri_brd.ajx`
   çağrılıp `IcraTakipDetay`/`HukukDavaDetay`'a yazılması, taraf (Taraf
   Bilgileri sekmesi) çekimi için Hukuk'un `dosya_borclu_list.ajx` karşılığının
-  bulunması.
+  bulunması, `SenkronKapsami`'ye göre gerçek arka plan senkron döngüsünün
+  (zamanlayıcı/periyodik `DosyaSorgu.calistir` çağrısı) kurulması — şu an
+  yalnız ayar ekranı var, otomatik çalıştıran bir zamanlayıcı YOK.

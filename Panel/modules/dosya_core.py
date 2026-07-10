@@ -110,6 +110,54 @@ def yargi_birimleri_bootstrap(log_fn=None):
     return sonuc
 
 
+def yargi_birimleri_db_den_yukle(yargi_turu=None):
+    """`YargiBirimi` tablosundan (önceden `yargi_birimleri_getir`/`_bootstrap`
+    ile doldurulmuş) kayıtları AĞA GİTMEDEN okur — ayar ekranının seçenek
+    listesini hızlı açması için. yargi_turu None ise tüm türler. DB
+    erişilemezse [] döner. Döner: list[{"yargi_turu","kod","ad"}]."""
+    try:
+        _django_hazirla()
+        from icra_models.models import YargiBirimi
+        qs = YargiBirimi.objects.all()
+        if yargi_turu is not None:
+            qs = qs.filter(yargi_turu=yargi_turu)
+        return [{"yargi_turu": b.yargi_turu, "kod": b.kod, "ad": b.ad} for b in qs]
+    except Exception:
+        return []
+
+
+def senkron_kapsami_durumu_getir():
+    """Ayar ekranının mevcut işaretli durumunu göstermesi için TÜM
+    `SenkronKapsami` kayıtlarını (aktif/pasif fark etmeksizin) döner.
+    Döner: list[{"yargi_turu","yargi_birimi_kod","aktif"}]."""
+    _django_hazirla()
+    from icra_models.models import SenkronKapsami
+    return [{"yargi_turu": s.yargi_turu, "yargi_birimi_kod": s.yargi_birimi_kod, "aktif": s.aktif}
+            for s in SenkronKapsami.objects.all()]
+
+
+def senkron_kapsami_kaydet(secimler):
+    """Ayar ekranından gelen TAM seçim listesini kaydeder (replace-all
+    semantik): `secimler` = list[(yargi_turu:int, yargi_birimi_kod:str)],
+    burada yargi_birimi_kod="" o yargı türünün TAMAMI demektir (§2.4, kullanıcı
+    onayı 2026-07-10 — 'tüm tür' seçeneği de var). Listede OLMAYAN var olan
+    kayıtlar SİLİNMEZ, yalnızca aktif=False yapılır (geçmiş/log amaçlı iz
+    korunur); listede olanlar upsert edilip aktif=True yapılır."""
+    _django_hazirla()
+    from icra_models.models import SenkronKapsami
+    from django.db import transaction as _tx
+    istenen = {(int(t), (k or "")) for t, k in secimler}
+    with _tx.atomic():
+        for s in SenkronKapsami.objects.all():
+            aktif_olmali = (s.yargi_turu, s.yargi_birimi_kod) in istenen
+            if s.aktif != aktif_olmali:
+                s.aktif = aktif_olmali
+                s.save(update_fields=["aktif"])
+        for (t, k) in istenen:
+            SenkronKapsami.objects.update_or_create(
+                yargi_turu=t, yargi_birimi_kod=k, defaults={"aktif": True})
+
+
 def birim_listesi_getir_genel(yargi_turu, yargi_birimi_kod, log_fn=None):
     """`icra_core.birim_listesi_getir`'in genellenmiş hâli — sabit
     yargiTuru=2/yargiBirimi=1101 yerine parametre alır. Önbelleksiz (her
@@ -176,11 +224,11 @@ def build_payload_genel(values, yargi_turu, yargi_birimi_kod, durum_kod=0, taraf
 
 
 def senkron_kapsamlari_getir():
-    """Aktif `SenkronKapsami` satırlarını döndürür: list[(yargi_turu,
-    yargi_birimi_kod)]. yargi_birimi_kod boşsa o yargı türünün TAMAMI demektir
-    — bu durumda önce `YargiBirimi`'den o türün kayıtlı tüm kodları genişletilir
-    (bootstrap'ın önceden çalışmış olması gerekir; yoksa o tür atlanır ve
-    log_fn ile bildirilir — çağıran `DosyaSorgu.calistir` bunu yapar)."""
+    """Aktif `SenkronKapsami` satırlarını HAM hâliyle döndürür: list[(yargi_turu,
+    yargi_birimi_kod)]. yargi_birimi_kod boş STRING olabilir ("tüm tür" seçimi,
+    §2.4) — bu fonksiyon genişletme YAPMAZ, ham kaydı döner. Genişletme
+    (`YargiBirimi`'den o türün tüm kodlarını türetme) `DosyaSorgu.calistir`'in
+    işidir (bkz. altındaki `_gorevleri_genislet`)."""
     _django_hazirla()
     from icra_models.models import SenkronKapsami
     return [(s.yargi_turu, s.yargi_birimi_kod) for s in SenkronKapsami.objects.filter(aktif=True)]
@@ -225,6 +273,35 @@ class DosyaSorgu:
                     break
         return tum
 
+    def _gorevleri_genislet(self, kapsamlar):
+        """Ham `SenkronKapsami` satırlarını (yargi_turu, yargi_birimi_kod) iş
+        listesine çevirir. yargi_birimi_kod="" ("tüm tür" seçimi, §2.4) ise
+        `YargiBirimi`'den o türün TÜM kayıtlı kodları genişletilir (önce DB
+        önbelleği, boşsa canlı `yargi_birimleri_getir` denenir). Genişletilemezse
+        (Yargı Birimi listesi de boşsa) o kapsam log ile bildirilip atlanır.
+        Döner: list[(yargi_turu, yargi_birimi_kod, yargi_turu_adi)]."""
+        gorevler = []
+        for yargi_turu, yargi_birimi_kod in kapsamlar:
+            ad = YARGI_TURU_ADI.get(yargi_turu, str(yargi_turu))
+            if yargi_birimi_kod:
+                gorevler.append((yargi_turu, yargi_birimi_kod, ad))
+                continue
+            birimler = yargi_birimleri_db_den_yukle(yargi_turu)
+            if not birimler:
+                self.log_fn(f"… '{ad}' (tüm tür) için Yargı Birimi listesi DB'de yok, canlı çekiliyor…")
+                try:
+                    birimler = yargi_birimleri_getir(yargi_turu, self.log_fn)
+                except Exception as e:
+                    self.log_fn(f"⚠️ '{ad}' (tüm tür) genişletilemedi: {e}")
+                    birimler = []
+            if not birimler:
+                self.log_fn(f"⚠️ '{ad}' (tüm tür) genişletilemedi — Yargı Birimi listesi boş/erişilemez, bu kapsam atlandı.")
+                continue
+            for b in birimler:
+                if b.get("kod"):
+                    gorevler.append((yargi_turu, b["kod"], f"{ad}/{b.get('ad', b['kod'])}"))
+        return gorevler
+
     def calistir(self, values=None, durum_kod=0):
         """`SenkronKapsami`'deki her aktif kapsamı sırayla arar, kaydeder.
         Döner: (kayit_sayisi, kapsam_sonuclari:list[dict]). `values` boşsa
@@ -239,6 +316,11 @@ class DosyaSorgu:
             self.log_fn("SenkronKapsami boş — hiçbir yargı türü/birimi seçilmemiş, senkron yapılacak bir şey yok.")
             return 0, []
 
+        gorevler = self._gorevleri_genislet(kapsamlar)
+        if not gorevler:
+            self.log_fn("Genişletme sonrası sorgulanacak hiçbir (yargı türü, yargı birimi) kalmadı.")
+            return 0, []
+
         try:
             _django_hazirla()
             from icra_models.ingest import dosya_kunyesi_kaydet
@@ -249,13 +331,7 @@ class DosyaSorgu:
 
         toplam = 0
         sonuclar = []
-        for yargi_turu, yargi_birimi_kod in kapsamlar:
-            ad = YARGI_TURU_ADI.get(yargi_turu, str(yargi_turu))
-            if not yargi_birimi_kod:
-                self.log_fn(f"⚠️ '{ad}' için yargı birimi belirtilmemiş (tüm birimler) — "
-                             "henüz desteklenmiyor, bu kapsam atlandı. Belirli bir yargı "
-                             "birimi seçin.")
-                continue
+        for yargi_turu, yargi_birimi_kod, ad in gorevler:
             self.log_fn(f"… sorgulanıyor: {ad} / {yargi_birimi_kod}")
             try:
                 kayitlar = self._bir_kapsami_ara(motor, yargi_turu, yargi_birimi_kod, values, durum_kod)

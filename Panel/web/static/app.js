@@ -9,6 +9,7 @@
   var CORE = [
     { key: "baglanti", label: "UYAP Bağlantısı", accent: "blue" },
     { key: "magaza", label: "Uygulama Mağazası", accent: "sage" },
+    { key: "senkron_kapsami", label: "Senkron Kapsamı", accent: "clay" },
     { key: "ayarlar", label: "Ayarlar", accent: "ink_faint" }
   ];
   // Menü gruplarının (katlanır başlık) rengi — katalogdaki menu_yolu adlarına göre.

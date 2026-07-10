@@ -51,6 +51,7 @@ from modules.icra_dosyalarim import IcraDosyalarimPanel
 from modules.mts_takip import MtsTakipPanel
 from modules.logger import LoggerPanel
 from modules.ayarlar import AyarlarPanel, auto_connect_mode
+from modules.senkron_kapsami import SenkronKapsamiPanel
 from modules.uretilmis_runner import UretilmisRunner
 from modules.magaza import MagazaPanel
 from modules import logger_core
@@ -374,6 +375,7 @@ class Panel(tk.Tk):
     CEKIRDEK_NAV = [
         {"key": "baglanti", "label": "UYAP Bağlantısı", "accent": C.BLUE},
         {"key": "magaza", "label": "Uygulama Mağazası", "accent": C.SAGE},
+        {"key": "senkron_kapsami", "label": "Senkron Kapsamı", "accent": C.CLAY},
         {"key": "ayarlar", "label": "Ayarlar", "accent": C.INK_FAINT},
     ]
 
@@ -1204,7 +1206,7 @@ class Panel(tk.Tk):
             return self.panels[key]
         uretilmis = {m["key"]: m for m in logger_core.registry_oku()}
         MODUL = {"icra_dosyalarim", "mts", "baglanti", "udf", "sgk", "logger",
-                 "ayarlar", "magaza"}
+                 "ayarlar", "magaza", "senkron_kapsami"}
         if key in MODUL or key in uretilmis:
             frame = tk.Frame(self.content, bg=C.BG)
             if key == "icra_dosyalarim":
@@ -1221,6 +1223,8 @@ class Panel(tk.Tk):
                 self.logger = LoggerPanel(frame, self)
             elif key == "ayarlar":
                 self.ayarlar = AyarlarPanel(frame, self)
+            elif key == "senkron_kapsami":
+                self.senkron_kapsami = SenkronKapsamiPanel(frame, self)
             elif key == "magaza":
                 self.magaza = MagazaPanel(frame, self)
             elif key in uretilmis:
