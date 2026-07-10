@@ -497,6 +497,18 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
     "yenile" job'ı 2 saniyede DB-erişilemez hatasıyla temiz bitti (asılı
     kalmadı). Canlı UYAP + PostgreSQL ile uçtan uca test hâlâ YAPILMADI.
 
+- **Doğrulama düzeltmesi (2026-07-10, `/verify` sonrası) — TAMAMLANDI**
+  (commit `c8315ca`): `/verify` sırasında canlı ölçüldü — `models/uyapdata/
+  settings.py`'de `connect_timeout` ayarlanmadığı için gerçek `.venv`
+  sürücüsüyle (psycopg v3) DB erişilemezken sorgular ~130 SANİYE donuyordu
+  (sistem python'daki psycopg2 ile aynı senaryo ~2 sn'de hızlı hata veriyordu
+  — fark sürücü, DB durumu değil). Bu, Faz 2'den beri `dosya_core.py`'nin
+  TÜM DB çağrılarını (zamanlayıcı, Dosyalarım ekranları, Senkron Kapsamı)
+  etkiliyordu; Faz 4/6 bunu YENİ, kullanıcının doğrudan tıkladığı yerlerde
+  (Filtrele/Yenile düğmeleri, zamanlayıcı döngüsü) görünür kıldığı için
+  düzeltildi. `DATABASES["default"]["OPTIONS"]["connect_timeout"] = 3`
+  eklendi — doğrulandı: aynı DB-erişilemez senaryo artık 130s yerine 3.46s.
+
 - **Kalan (henüz yapılmadı):** Dosya Bilgileri ayrıntısının UYDURULMAYAN
   kalan alanları (faiz/masraf ayrıntısı, ilgili/seri/birleşen dosya
   listeleri, başvuruya bırakılma tarihi — canlı JSON dökümü yapıldığında
