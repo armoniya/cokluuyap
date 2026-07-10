@@ -582,14 +582,26 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
     var — YENİ.
   - **Arabuluculuk** (ARABULUCULUK MERKEZİ, 2026/4855): rol =
     `Başvurucu`/`Diğer Taraf` — YENİ.
-  - **Cbs** ve **Tazminat Komisyonu Başkanlığı**: CANLI DOĞRULANAMADI.
-    Tazminat Komisyonu'nda gerçek yanıt `[[],0]` geldi (bu kullanıcının bu
-    türde dosyası yok — kod sorunu değil). Cbs'de 4 farklı kombinasyon
-    denendi (İzmir/İstanbul illeri, 2 farklı Cumhuriyet Başsavcılığı birimi,
-    birimsiz) — hiçbirinde arama isteği hiç ateşlenmedi, "Sorgula" butonu
-    "Sorgulanıyor…" durumunda kalıcı olarak kilitlendi (yeniden seçim dahi
-    sıfırlamadı, yalnız tam sayfa yeniden yükleme çözüyor) — UYAP'ın kendi
-    arayüz kısıtlaması, muhtemelen bu kullanıcının Cbs dosyası da yok.
+  - **Cbs** (2026-07-11, ikinci deneme): önceki oturumda "Sorgula" butonu
+    kalıcı "Sorgulanıyor…" durumunda kilitlenmişti (muhtemelen o anki İl/
+    Yargı Birimi kombinasyonuna özgü geçici bir durum); kullanıcının uyarısı
+    üzerine tekrar denendiğinde İzmir + İzmir Cumhuriyet Başsavcılığı
+    kombinasyonuyla sorgu ÇALIŞTI ve gerçek Cbs Soruşturma Dosyaları listelendi
+    (örn. 2026/88535, 2026/68375, 2026/143181...). Ancak dosya detayı
+    modalında Hukuk/İcra/Ceza'daki gibi bir "Taraf Bilgileri" sekmesi/kartı
+    HİÇ YOK — yalnızca Evrak, Kişisel Notlarım, Ödeme kartları var (hem
+    normal hem tam ekran görünümde doğrulandı). Kesin kanıt için
+    `dosya_taraf_bilgileri_brd.ajx` gerçek bir Cbs `dosyaId`'siyle DOĞRUDAN
+    çağrıldı: sunucu boş liste DEĞİL, açık bir yetki hatası döndürdü —
+    `{"errorCode":"PRTL_GNL_1-1","error":"Bu dosya üzerinde ilgili işlemi
+    yapma yetkiniz bulunmamaktadır."}`. Yani Cbs (soruşturma) dosyalarında
+    taraf bilgisi UYAP tarafında avukata KASITLI OLARAK kapalı (muhtemelen
+    soruşturma gizliliği) — UI kısıtlaması değil, sunucu-taraflı yetki
+    kısıtlaması. `dosya_taraf_getir` (`dosya_core.py`) bu durumu zaten güvenle
+    ele alıyor: yanıt `list` değilse (`isinstance(veri, list)` False) `[]`
+    döner, hiçbir hata/kayıp oluşmaz — kod değişikliği GEREKMEDİ.
+  - **Tazminat Komisyonu Başkanlığı**: CANLI DOĞRULANAMADI. Gerçek yanıt
+    `[[],0]` geldi (bu kullanıcının bu türde dosyası yok — kod sorunu değil).
 
   **Bulunan gerçek hata — `rol` alanı çok kısaydı:** yeni rol string'lerinin
   `tr_lower()` çıktıları mevcut `max_length=10`'u aşıyordu: `"Üçüncü Şahıs"`
@@ -612,11 +624,13 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
 - **Kalan (henüz yapılmadı):** Dosya Bilgileri ayrıntısının UYDURULMAYAN
   kalan alanları (faiz/masraf ayrıntısı, ilgili/seri/birleşen dosya
   listeleri, başvuruya bırakılma tarihi — canlı JSON dökümü yapıldığında
-  tamamlanacak). Taraf Bilgileri uç noktasının Cbs ve Tazminat Komisyonu
-  Başkanlığı'nda canlı doğrulanması (bu kullanıcının o türlerde dosyası
+  tamamlanacak). Taraf Bilgileri uç noktasının Tazminat Komisyonu
+  Başkanlığı'nda canlı doğrulanması (bu kullanıcının o türde dosyası
   olmadığı için şu an mümkün değil — yeni bir dosya açıldığında tekrar
-  denenebilir; `rol` alanının `max_length=20`'si bu ikisi için TAHMİNİ bir
-  pay, kesin değil). Gerçek PostgreSQL ile uçtan uca DB yazma testi (bu
+  denenebilir). Cbs artık KESİN: sunucu yetki hatası döndürüyor, taraf verisi
+  hiç gelmiyor — `max_length=20`'nin Cbs için TAHMİN olma durumu ortadan
+  kalktı (Cbs zaten hiç rol değeri üretmeyecek); yalnız Tazminat Komisyonu
+  için hâlâ doğrulanmamış bir pay olarak kalıyor. Gerçek PostgreSQL ile uçtan uca DB yazma testi (bu
   geliştirme ortamında embedded Postgres yok). Ayrıca ileride istenirse:
   zamanlayıcı aralığının (şu an sabit 30 dk) bir ayar ekranından değiştirilebilir hâle getirilmesi,
   "stale dosyaId" davranışının canlı doğrulanması (bkz. Faz 5 "kabul
