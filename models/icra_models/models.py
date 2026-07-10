@@ -18,12 +18,20 @@ from django.db import models
 
 
 class Birim(models.Model):
-    """İcra dairesi / birim — kapak künyesinin 'İcra Dairesi' parçası."""
+    """İcra dairesi / birim / mahkeme — kapak künyesinin birim kısmı.
+    turu1/turu2/turu3, UYAP yanıt kaydının KENDİ 'birimTuru1/2/3' alanlarıdır
+    (örn. icra için "11"/"1101"/"1199") — bunlar arama sorgusunda gönderilen
+    'yargiTuru' parametresiyle AYNI ANLAMA GELMEZ (bkz.
+    docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §1.6, ingest.py okunarak
+    doğrulandı). Yargı türü (Ceza/Hukuk/İcra/... — search_phrase_detayli.ajx
+    payload'ındaki 'birimTuru3') bu yüzden AYRI bir alanla tutulur."""
     birim_id = models.CharField("UYAP Birim No", max_length=32, unique=True)
     ad = models.CharField("Birim Adı", max_length=255)
     turu1 = models.CharField("birimTuru1", max_length=8, blank=True)
     turu2 = models.CharField("birimTuru2", max_length=8, blank=True)   # 1101 = İcra Dairesi
     turu3 = models.CharField("birimTuru3", max_length=8, blank=True)
+    yargi_turu = models.PositiveSmallIntegerField(
+        "Yargı Türü Kodu", null=True, blank=True, db_index=True)   # 0=Ceza,1=Hukuk,2=İcra,...
     olusturulma = models.DateTimeField(auto_now_add=True)
     guncelleme = models.DateTimeField(auto_now=True)
 
@@ -34,6 +42,51 @@ class Birim(models.Model):
 
     def __str__(self):
         return self.ad
+
+
+class YargiBirimi(models.Model):
+    """Yargı Birimi (mahkeme türü) referans listesi — yargiBirimleriSorgula_brd.ajx
+    yanıtından (bkz. docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §1.2). 'kod' alanı
+    UYAP'ın 'tablo' alanıdır (arama sorgusunda birimTuru2 olarak gönderilir),
+    'ad' ise UYAP'ın (ters adlandırılmış) 'kod' alanıdır (görünen isim)."""
+    yargi_turu = models.PositiveSmallIntegerField("Yargı Türü Kodu", db_index=True)
+    kod = models.CharField("Birim Türü Kodu (tablo)", max_length=8)
+    ad = models.CharField("Birim Türü Adı", max_length=120)
+    olusturulma = models.DateTimeField(auto_now_add=True)
+    guncelleme = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Yargı Birimi"
+        verbose_name_plural = "Yargı Birimleri"
+        ordering = ["yargi_turu", "ad"]
+        constraints = [
+            models.UniqueConstraint(fields=["yargi_turu", "kod"], name="uq_yargi_birimi"),
+        ]
+
+    def __str__(self):
+        return f"{self.ad} ({self.kod})"
+
+
+class SenkronKapsami(models.Model):
+    """Kullanıcının senkronize edilmesini istediği (yargı türü, yargı birimi
+    türü) kombinasyonu. Hiç kayıt yoksa hiçbir şey otomatik senkron edilmez —
+    kullanıcı en az bir kombinasyon eklemeli. yargi_birimi_kod boşsa o yargı
+    türünün TAMAMI kapsam dahilindedir."""
+    yargi_turu = models.PositiveSmallIntegerField("Yargı Türü Kodu")
+    yargi_birimi_kod = models.CharField("Yargı Birimi Kodu (tablo)", max_length=8, blank=True)
+    aktif = models.BooleanField(default=True)
+    olusturulma = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Senkron Kapsamı"
+        verbose_name_plural = "Senkron Kapsamları"
+        constraints = [
+            models.UniqueConstraint(fields=["yargi_turu", "yargi_birimi_kod"],
+                                    name="uq_senkron_kapsami"),
+        ]
+
+    def __str__(self):
+        return f"Yargı Türü {self.yargi_turu} · {self.yargi_birimi_kod or 'tümü'}"
 
 
 class Taraf(models.Model):
@@ -102,12 +155,24 @@ class Dosya(models.Model):
     kimlik DEĞİLDİR; yalnız o oturumda taraf/detay çekmek için saklanır."""
 
     class Durum(models.IntegerChoices):
+        """UYAP'ın kendi 'dosyaDurumKod' değerleri — OLDUĞU GİBİ saklanır
+        (bkz. ingest.py, choices yalnız görüntüleme içindir). Kod anlamı
+        yargı türüne göre değişebilir (bkz.
+        docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §5) — burada yalnız canlı
+        doğrulanan değerler var, tam liste değildir."""
         ACIK = 0, "Açık"
         KAPALI = 1, "Kapalı"
+        KARARA_CIKMIS = 7, "Karara Çıkmış"
+        ISTINAFTA = 29, "İstinafta"
 
     class Tur(models.IntegerChoices):
+        """UYAP'ın kendi 'dosyaTurKod' değerleri — OLDUĞU GİBİ saklanır (bkz.
+        ingest.py). Yalnız canlı doğrulanan değerler; tam liste değildir
+        (bkz. docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §5)."""
         ESAS = 0, "Esas"
         TALIMAT = 1, "Talimat"
+        HUKUK_DEGISIK_IS = 14, "Hukuk Değişik İş Dosyası"
+        HUKUK_DAVA = 15, "Hukuk Dava Dosyası"
 
     dosya_id = models.CharField("UYAP Dosya Kimliği (oturumluk)", max_length=255,
                                 blank=True, db_index=True)
@@ -169,6 +234,63 @@ class DosyaTaraf(models.Model):
 
     def __str__(self):
         return f"{self.dosya} · {self.get_rol_display()}: {self.taraf}"
+
+
+class IcraTakipDetay(models.Model):
+    """İcra/takip dosyasına özgü ayrıntı — dosyaAyrintiBilgileri_brd.ajx
+    yanıtından (bkz. docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §1.5/§2.5). Hukuk
+    dava dosyalarında bu alanlar hiç YOK — bu yüzden ayrı bir model (ortak
+    tek tabloda hep NULL kalacak alanlar yerine)."""
+    dosya = models.OneToOneField(Dosya, on_delete=models.CASCADE, related_name="icra_detay")
+
+    takibin_turu = models.CharField(max_length=8, blank=True)
+    takibin_turu_aciklama = models.CharField(max_length=120, blank=True)
+    takibin_sekli = models.CharField(max_length=8, blank=True)
+    takibin_sekli_aciklama = models.CharField(max_length=255, blank=True)
+    takibin_yolu = models.CharField(max_length=8, blank=True)
+    takibin_yolu_aciklama = models.CharField(max_length=120, blank=True)
+
+    alacak_kalemi_toplam = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    alacak_kalemi_faiz = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    takip_sonrasi_masraf = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    vekalet_ucreti = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    tahsil_harci = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    yapilmis_tahsilat = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    guncelleme = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "İcra Takip Detayı"
+        verbose_name_plural = "İcra Takip Detayları"
+
+    def __str__(self):
+        return f"{self.dosya} · Takip Detayı"
+
+
+class HukukDavaDetay(models.Model):
+    """Hukuk dava/değişik iş dosyasına özgü ayrıntı —
+    dosyaAyrintiBilgileri_brd.ajx yanıtından (bkz.
+    docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §1.5/§2.5). İcra dosyalarında bu
+    alanlar hiç YOK — bu yüzden ayrı bir model."""
+    dosya = models.OneToOneField(Dosya, on_delete=models.CASCADE, related_name="hukuk_detay")
+
+    dava_acilis_turu = models.CharField(max_length=120, blank=True)
+    dava_turleri = models.CharField(max_length=500, blank=True)
+    ilgili_dosya_listesi = models.CharField(max_length=500, blank=True)
+    ilgili_dava_listesi = models.CharField(max_length=500, blank=True)
+    ilgili_seri_dava_listesi = models.CharField(max_length=500, blank=True)
+    birlesen_dosya_listesi = models.CharField(max_length=500, blank=True)
+    durusma_tarihi = models.DateTimeField(null=True, blank=True)
+    basvuruya_birakilma_tarihi = models.DateTimeField(null=True, blank=True)
+
+    guncelleme = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Hukuk Dava Detayı"
+        verbose_name_plural = "Hukuk Dava Detayları"
+
+    def __str__(self):
+        return f"{self.dosya} · Dava Detayı"
 
 
 class Evrak(models.Model):

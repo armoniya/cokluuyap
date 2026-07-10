@@ -188,9 +188,41 @@ alanlar döndürüyor (§1 canlı test, önceki oturumdan):
   `durusmaTarihi`, `basvuruyaBirakilmaTarihiStr`, ...
 
 Tek bir düz tabloya zorlamak yanlış olur (çoğu alan diğer ailede hep NULL
-kalır). Öneri: `Dosya`'ya JSON alan (`ayrinti_json = models.JSONField(default=dict)`)
-+ yalnız FİLTRELEMEDE kullanılacak ortak alanlar (`durusma_tarihi` gibi) ayrı
-sütun. **Bu, açık bir tasarım kararı — kullanıcı onayı gerekir** (bkz. §6).
+kalır). **KARARLAŞTIRILDI (kullanıcı onayı, 2026-07-10): aile başına ayrı
+model**, `Dosya`'ya `OneToOneField(related_name=...)`:
+
+```python
+class IcraTakipDetay(models.Model):
+    dosya = models.OneToOneField(Dosya, on_delete=models.CASCADE, related_name="icra_detay")
+    takibin_turu = models.CharField(max_length=8, blank=True)
+    takibin_turu_aciklama = models.CharField(max_length=120, blank=True)
+    takibin_sekli = models.CharField(max_length=8, blank=True)
+    takibin_sekli_aciklama = models.CharField(max_length=255, blank=True)
+    takibin_yolu = models.CharField(max_length=8, blank=True)
+    takibin_yolu_aciklama = models.CharField(max_length=120, blank=True)
+    alacak_kalemi_toplam = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    alacak_kalemi_faiz = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    takip_sonrasi_masraf = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    vekalet_ucreti = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    tahsil_harci = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    yapilmis_tahsilat = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+
+class HukukDavaDetay(models.Model):
+    dosya = models.OneToOneField(Dosya, on_delete=models.CASCADE, related_name="hukuk_detay")
+    dava_acilis_turu = models.CharField(max_length=120, blank=True)
+    dava_turleri = models.CharField(max_length=500, blank=True)
+    ilgili_dosya_listesi = models.CharField(max_length=500, blank=True)
+    ilgili_dava_listesi = models.CharField(max_length=500, blank=True)
+    ilgili_seri_dava_listesi = models.CharField(max_length=500, blank=True)
+    birlesen_dosya_listesi = models.CharField(max_length=500, blank=True)
+    durusma_tarihi = models.DateTimeField(null=True, blank=True)
+    basvuruya_birakilma_tarihi = models.DateTimeField(null=True, blank=True)
+```
+
+Yeni yargı türleri (Ceza, İdari Yargı, ...) canlı test edildikçe kendi
+`*Detay` modelleri aynı desenle eklenecek (bkz. §5 açık sorular — henüz
+canlı görülmedi, alan uydurulmayacak).
 
 ## 3. Akış (öneri)
 
@@ -213,7 +245,7 @@ sütun. **Bu, açık bir tasarım kararı — kullanıcı onayı gerekir** (bkz.
    `dosya_borclu_list.ajx` çağrısının Hukuk için karşılığı (Taraf Bilgileri
    sekmesi) henüz doğrulanmadı (bkz. §5).
 
-## 4. Mimari karar — AÇIK SORU (kullanıcıya, kod yazmadan önce)
+## 4. Mimari karar — KARARLAŞTIRILDI (kullanıcı onayı, 2026-07-10): **(B) Paralel modül**
 
 `icra_core.py` üretimde kanıtlanmış, özenle yazılmış bir modül (sayfalama,
 taraf varyant denemeleri, `X-Uyap-Read` adalet başlığı, DB fallback — hepsi
@@ -228,8 +260,9 @@ parametreye çevirmek) İcra akışını regresyona sokma riski taşır. İki se
   sarmalayıcı (wrapper) olarak kalsın — İcra akışı hiç dokunulmamış olur.
 
 Kullanıcının "çalışan sistem bir köşede kalsın, belki iki farklı ürün"
-tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı olan **(B)**
-daha güvenli görünüyor, ama karar kullanıcıya bırakılmalı.
+tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
+`dosya_core.py` ortak mantığı taşıyacak, `icra_core.py` DOKUNULMADAN kalıp
+üzerine ince bir sarmalayıcı (veya paralel, ayrı çağrılan bir modül) olacak.
 
 ## 5. Açık sorular / eksik doğrulamalar
 
@@ -246,14 +279,18 @@ daha güvenli görünüyor, ama karar kullanıcıya bırakılmalı.
 - `dosyaAyrintiBilgileri_brd.ajx`'in Ceza/İdari Yargı/vb. için üçüncü bir
   şekli olup olmadığı bilinmiyor.
 
-## 6. Kullanıcıya sorular
+## 6. Kararlar
 
-1. §4 mimari kararı: **(A) yerinde genelleştir** mi, **(B) paralel modül**
-   mü?
-2. §2.5 "Dosya Bilgileri" verisi için JSON alan yaklaşımı kabul edilebilir
-   mi, yoksa aile başına ayrı model mi tercih edilir (örn. `IcraTakipDetay`,
-   `HukukDavaDetay`)?
-3. §5'teki eksik doğrulamalar için: kalan yargı türlerini (Ceza, İdari Yargı,
-   vb.) ve taraf/tereke uç noktalarını tek tek canlı test etmeye devam
-   edelim mi (yine Chrome ile), yoksa yeterli veri toplandı, Faz 1'e (şema +
-   bootstrap) geçelim mi?
+1. ~~§4 mimari kararı~~ → **(B) paralel modül** (kullanıcı onayı, 2026-07-10).
+2. ~~§2.5 "Dosya Bilgileri" şeması~~ → **aile başına ayrı model**
+   (`IcraTakipDetay`, `HukukDavaDetay`, ...) (kullanıcı onayı, 2026-07-10).
+3. **Sıralama kararı:** §5'teki eksik doğrulamalar (Ceza/İdari Yargı için
+   search_phrase_detayli şekli, Hukuk taraf uç noktası, tereke kodu) her biri
+   AYRI bir canlı-test gerektiriyor ve İcra+Hukuk'tan bağımsız. Projenin
+   şimdiye dek işleyen deseniyle tutarlı olarak: **Faz 1 (şema: `Birim.
+   yargi_turu`, `YargiBirimi`, `SenkronKapsami`, genişletilmiş `Durum`/`Tur`
+   choices, `IcraTakipDetay`+`HukukDavaDetay`) şimdi, elimizdeki DOĞRULANMIŞ
+   İcra+Hukuk verisiyle yazılıyor.** Ceza/İdari Yargı/Satış Memurluğu/vb. ve
+   taraf/tereke uç noktaları, o yargı türleri fiilen kullanılmaya
+   başlandığında (ya da ayrı bir doğrulama oturumunda) kendi `*Detay`
+   modelleriyle eklenecek — şimdiden alan uydurulmayacak.
