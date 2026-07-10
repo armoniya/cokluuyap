@@ -574,12 +574,22 @@ def dosya_detay_goster_ve_kaydet(rec, log_fn=None):
         return ham, None, False, (f"Dosya yerel veritabanında bulunamadı (önce "
                                    f"Sorgula/senkron ile kaydedilmeli olabilir): {e}"), []
     aile, kaydedildi = dosya_ayrinti_kaydet(dosya, ham, log)
-    taraflar = dosya_taraf_getir(dosya_id, log)
-    if taraflar:
-        try:
-            dosya_taraf_kaydet(dosya, taraflar, log)
-        except Exception as e:
-            log(f"⚠️ Taraf bilgileri kaydedilemedi: {e}")
+    # İcra dosyalarında taraf (alacaklı/borçlu) zaten icra_core.py'nin CANLI
+    # doğrulanmış 'dosya_borclu_list.ajx' akışıyla dolduruluyor (bkz. IcraSorgu.
+    # ara). Bu yeni uç nokta yalnız Hukuk'ta canlı doğrulandı (2026-07-10);
+    # İcra'da da aynı rol string'lerini (Alacaklı/Borçlu) döndürdüğü VARSAYIM
+    # — canlı test edilemedi (UYAP arayüzü o oturumda takıldı). "Kanıtlanmamış
+    # kodu kanıtlı akışın üstüne yazma" ilkesi gereği (bkz. plan §4 mimari
+    # karar B) İcra'da bu çağrı ATLANIR; yalnız görüntülemede taraflar boş
+    # kalır, DosyaTaraf zaten dolu olduğu için kullanıcı kaybı yoktur.
+    taraflar = []
+    if aile != "icra":
+        taraflar = dosya_taraf_getir(dosya_id, log)
+        if taraflar:
+            try:
+                dosya_taraf_kaydet(dosya, taraflar, log)
+            except Exception as e:
+                log(f"⚠️ Taraf bilgileri kaydedilemedi: {e}")
     return ham, aile, kaydedildi, None, taraflar
 
 

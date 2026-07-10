@@ -308,7 +308,7 @@ class DosyalarimGenelPanel:
             for t in taraflar:
                 satir = f"  {t.get('rol', '')}: {t.get('adi', '')}"
                 if t.get("vekil"):
-                    satir += f" — Vekil: {t['vekil']}"
+                    satir += f" — Vekil: {t['vekil'].strip('[]')}"
                 satirlar.append(satir)
         messagebox.showinfo(baslik, "\n".join(satirlar) +
                              ("\n\n(Yerel veritabanına kaydedildi.)" if kaydedildi else ""))

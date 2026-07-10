@@ -150,7 +150,7 @@
         satirlar.push("Taraf Bilgileri:");
         taraflar.forEach(function (t) {
           var satir = "  " + (t.rol || "") + ": " + (t.adi || "");
-          if (t.vekil) satir += " — Vekil: " + t.vekil;
+          if (t.vekil) satir += " — Vekil: " + t.vekil.replace(/^\[|\]$/g, "");
           satirlar.push(satir);
         });
       }

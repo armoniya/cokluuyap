@@ -524,24 +524,47 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
   Kod: `dosya_core.py`'ye `dosya_taraf_getir`/`_taraf_bilgisi_ayristir`/
   `_vekil_kaydet`/`dosya_taraf_kaydet` eklendi; `dosya_detay_goster_ve_kaydet`
   artık 5'li tuple döner (`..., taraflar`) — ayrıntı + taraf TEK çağrıda
-  gelir. `models.DosyaTaraf.Rol`'e `DAVACI`/`DAVALI` eklendi (migration 0005)
-  — `İcra`'nın kendi `alacakli`/`borclu` akışına DOKUNULMADI. Her iki UI
-  (`icra_dosyalarim.py`, `dosyalarim_genel.py`, `icra.js`, `dosyalarim_genel.js`,
-  web `server.py`'nin `icra_detay`/`dosyalarim_detay`) "Dosya Görüntüle"
-  çıktısına Taraf Bilgileri listesini ekleyecek şekilde güncellendi.
+  gelir. `models.DosyaTaraf.Rol`'e `DAVACI`/`DAVALI` eklendi (migration 0005).
+  Her iki UI (`icra_dosyalarim.py`, `dosyalarim_genel.py`, `icra.js`,
+  `dosyalarim_genel.js`, web `server.py`'nin `icra_detay`/`dosyalarim_detay`)
+  "Dosya Görüntüle" çıktısına Taraf Bilgileri listesini ekleyecek şekilde
+  güncellendi.
+
+  **İcra'da BİLEREK devre dışı:** `dosya_detay_goster_ve_kaydet`, `aile ==
+  "icra"` olduğunda yeni uç noktayı HİÇ ÇAĞIRMAZ (`taraflar` boş liste
+  döner) — İcra'nın kendi CANLI doğrulanmış `dosya_borclu_list.ajx`
+  akışı (`icra_core.IcraSorgu.ara`) zaten `DosyaTaraf`'ı dolduruyor, yeni
+  (yalnız Hukuk'ta test edilen) uç nokta onun üstüne YAZMAZ. Bu gate advisor
+  incelemesinde bulundu: İcra'da aynı rol string'lerinin (`Alacaklı`/
+  `Borçlu`) `tr_lower` ile mevcut `alacakli`/`borclu` koduna temiz
+  eşleneceği bir VARSAYIMDI, canlı İcra dosyasında test edilemedi (UYAP
+  arayüzü o oturumda "Sorgulanıyor…" durumunda takıldı — SPA'ya doğrudan
+  URL ile girişten kaynaklanan bir hydration sorunu olabilir, kod hatası
+  değil). "Kanıtlanmamış kodu kanıtlı akışın üstüne yazma" ilkesi gereği
+  gate eklendi; İcra dışı (Hukuk + henüz `*Detay` modeli olmayan diğer
+  türler) etkilenmedi.
+
   Doğrulama: gerçek `.venv` altında `py_compile` + izole testler (canlı
   yakalanan tam JSON üzerinde `_taraf_bilgisi_ayristir`/`_vekil_kaydet`
   ayrıştırma, DB/proxy kapalıyken hata yollarının 5'li tuple ile hızlı/temiz
-  dönmesi) + `panel.py --selftest` + web sunucusu (güvenli harness,
+  dönmesi, İcra/Hukuk gate'inin doğru dallandığı casus-fonksiyonla
+  doğrulandı) + `panel.py --selftest` + web sunucusu (güvenli harness,
   `_load_auth()` ÇAĞRILMADAN) ile `/api/dosyalarim/detay` uçtan uca test
-  edildi. Canlı UYAP ile TAM uçtan uca (gerçek DB'ye kayıt) hâlâ ayrı
-  doğrulanmadı.
+  edildi + `dosya_taraf_kaydet`'in GERÇEK Django ORM yazma yolu (bu ortamda
+  gerçek PostgreSQL YOK — geçici SQLite ayarıyla) canlı yakalanan tam JSON
+  üzerinde çalıştırıldı: 3 Taraf + 2 Vekil (dedup doğru) + 3 DosyaTaraf
+  oluştu, ikinci çağrıda (`update_or_create` idempotency) satır
+  ÇOĞALMADI. Canlı UYAP + gerçek PostgreSQL ile TAM uçtan uca (bu ortamda
+  embedded Postgres binary'leri mevcut değil) hâlâ ayrı doğrulanmadı.
 
 - **Kalan (henüz yapılmadı):** Dosya Bilgileri ayrıntısının UYDURULMAYAN
   kalan alanları (faiz/masraf ayrıntısı, ilgili/seri/birleşen dosya
   listeleri, başvuruya bırakılma tarihi — canlı JSON dökümü yapıldığında
-  tamamlanacak). Taraf Bilgileri uç noktasının Hukuk dışı yargı türlerinde
-  (Ceza, İdari Yargı vb.) ayrı canlı doğrulanması. Ayrıca ileride istenirse:
+  tamamlanacak). Taraf Bilgileri uç noktasının İcra'da da aynı şekilde
+  çalışıp çalışmadığının canlı doğrulanması (şu an BİLEREK atlanıyor, yukarı
+  bkz.) ve Hukuk dışı diğer yargı türlerinde (Ceza, İdari Yargı vb.) ayrı
+  canlı doğrulanması. Gerçek PostgreSQL ile uçtan uca DB yazma testi (bu
+  geliştirme ortamında embedded Postgres yok). Ayrıca ileride istenirse:
   zamanlayıcı aralığının (şu an sabit 30 dk) bir ayar ekranından
   değiştirilebilir hâle getirilmesi, "stale dosyaId" davranışının canlı
   doğrulanması (bkz. Faz 5 "kabul edilmiş bilinmeyen").
