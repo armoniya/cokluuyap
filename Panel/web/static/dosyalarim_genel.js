@@ -174,6 +174,16 @@
       } else {
         satirlar = ["Bu yargı türü için henüz ayrıntı görüntüleme desteklenmiyor."];
       }
+      var taraflar = d.taraflar || [];
+      if (taraflar.length) {
+        satirlar.push("");
+        satirlar.push("Taraf Bilgileri:");
+        taraflar.forEach(function (t) {
+          var satir = "  " + (t.rol || "") + ": " + (t.adi || "");
+          if (t.vekil) satir += " — Vekil: " + t.vekil;
+          satirlar.push(satir);
+        });
+      }
       alert(satirlar.join("\n") + (d.kaydedildi ? "\n\n(Yerel veritabanına kaydedildi.)" : ""));
     }).catch(function (e) { detayBtn.disabled = false; statusEl.textContent = ""; log("[HATA] " + e); });
   }

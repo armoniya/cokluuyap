@@ -275,7 +275,7 @@ class DosyalarimGenelPanel:
     def _detay_goster(self, sonuc):
         from tkinter import messagebox
         self.detay_btn.set_state("normal")
-        ham, aile, kaydedildi, hata = sonuc
+        ham, aile, kaydedildi, hata, taraflar = sonuc
         if hata:
             self.durum_lbl.config(text="Dosya ayrıntısı alınamadı")
             messagebox.showerror("Dosya Görüntüle", hata)
@@ -302,6 +302,14 @@ class DosyalarimGenelPanel:
         else:
             satirlar = ["Bu yargı türü için henüz ayrıntı görüntüleme desteklenmiyor."]
             baslik = "Dosya Bilgileri"
+        if taraflar:
+            satirlar.append("")
+            satirlar.append("Taraf Bilgileri:")
+            for t in taraflar:
+                satir = f"  {t.get('rol', '')}: {t.get('adi', '')}"
+                if t.get("vekil"):
+                    satir += f" — Vekil: {t['vekil']}"
+                satirlar.append(satir)
         messagebox.showinfo(baslik, "\n".join(satirlar) +
                              ("\n\n(Yerel veritabanına kaydedildi.)" if kaydedildi else ""))
 

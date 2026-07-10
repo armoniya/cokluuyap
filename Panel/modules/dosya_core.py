@@ -450,21 +450,117 @@ def dosya_ayrinti_kaydet(dosya, ham, log_fn=None):
     return None, False
 
 
+# ── Taraf Bilgileri (tüm yargı türleri) ──────────────────────────────────
+# Canlı doğrulandı (2026-07-10, Hukuk dava dosyası, klasik avukat.uyap.gov.tr
+# üzerinden Chrome ağ trafiği yakalanarak — bkz.
+# docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §8). Yanıt şekli:
+#   [{"adi": str, "rol": "Davacı"|"Davalı", "vekil": "[AD SOYAD]" (opsiyonel —
+#     vekil yoksa anahtar HİÇ yok), "kisiKurum": "Kişi"|"Kurum"}, ...]
+# TCKN/MERSİS/vergi no VERMEZ — save_taraf bu yüzden ad/unvan eşleşmesine
+# düşer (icra_core.save_taraf zaten bunu destekliyor, tckn'i defaults'ta
+# EZMEZ). Yalnız Hukuk canlı test edildi; sekmenin diğer yargı türlerinde de
+# aynı uç noktayı kullandığı `dosya_islem_turleri_sorgula_brd.ajx` yanıtındaki
+# ortak modül listesinden (taraf_bilgileri) çıkarılıyor — ayrı ayrı
+# doğrulanmadı, bu yüzden hata durumunda sessizce [] döner (varsayım UI'ı
+# bozmaz, yalnız o dosya için taraf boş kalır).
+TARAF_BILGILERI_ENDPOINT = "dosya_taraf_bilgileri_brd.ajx"
+
+
+def dosya_taraf_getir(dosya_id, log_fn=None):
+    """`dosya_taraf_bilgileri_brd.ajx` çağrısı. `dosya_id` TAZE olmalı (bkz.
+    `dosya_ayrinti_getir` docstring'i — aynı oturumluk kısıt). Ağ hatasında
+    ya da beklenmeyen yanıt şeklinde [] döner."""
+    log = log_fn or (lambda *a, **k: None)
+    motor = SorguMotoru(log)
+    try:
+        _status, veri = motor._post(TARAF_BILGILERI_ENDPOINT, {"dosyaId": str(dosya_id)})
+    except Exception as e:
+        log(f"⚠️ Taraf bilgileri alınamadı: {e}")
+        return []
+    return veri if isinstance(veri, list) else []
+
+
+def _taraf_bilgisi_ayristir(item):
+    """`dosya_taraf_getir` satırını `save_taraf`'ın beklediği sözlüğe çevirir.
+    Ad/soyad ayrımı, kod tabanında zaten kullanılan sezgiyle yapılır (son
+    kelime soyad — bkz. icra_core.parse_taraf_from_uyap'taki unvan bölme)."""
+    adi = str(item.get("adi", "") or "").strip()
+    if tr_lower(item.get("kisiKurum", "")) == "kurum":
+        return {"tur": "tuzel", "unvan": adi, "ad": "", "soyad": "",
+                "tckn": None, "vergi_no": "", "mersis_no": None}
+    parcalar = adi.rsplit(None, 1)
+    ad, soyad = (parcalar[0], parcalar[1]) if len(parcalar) == 2 else (adi, "")
+    return {"tur": "gercek", "ad": ad, "soyad": soyad, "unvan": "",
+            "tckn": None, "vergi_no": "", "mersis_no": None}
+
+
+def _vekil_kaydet(vekil_ham, Vekil, log_fn=None):
+    """`item['vekil']` (ör. "[HAKAN TOLUNAY BURHAN]") ayrıştırıp dedup ederek
+    `Vekil` nesnesi döner; yoksa None. TCKN/baro yok — yalnız ad+soyad
+    eşleşmesiyle dedup edilir (bu uç nokta başka kimlik vermiyor)."""
+    log = log_fn or (lambda m: None)
+    metin = str(vekil_ham or "").strip()
+    if metin.startswith("[") and metin.endswith("]"):
+        metin = metin[1:-1].strip()
+    if not metin:
+        return None
+    isimler = [p.strip() for p in metin.split(",") if p.strip()]
+    if len(isimler) > 1:
+        log(f"… birden fazla vekil bulundu {isimler}, yalnız ilki kaydediliyor "
+            "(DosyaTaraf.vekil tekil alan, çoklu-vekil durumu canlı doğrulanmadı).")
+    isim = isimler[0] if isimler else metin
+    parcalar = isim.rsplit(None, 1)
+    ad, soyad = (parcalar[0], parcalar[1]) if len(parcalar) == 2 else (isim, "")
+    if not ad:
+        return None
+    vekil = Vekil.objects.filter(ad=ad, soyad=soyad).first()
+    return vekil or Vekil.objects.create(ad=ad, soyad=soyad)
+
+
+def dosya_taraf_kaydet(dosya, ham_liste, log_fn=None):
+    """`dosya_taraf_getir`'in ham yanıtını `DosyaTaraf`'a yazar. Rol, Türkçe
+    metinden `tr_lower` ile koda çevrilir (Davacı→davaci, Davalı→davali,
+    Alacaklı→alacakli, Borçlu→borclu — bkz. models.DosyaTaraf.Rol). Döner:
+    kaydedilen_sayisi:int."""
+    log = log_fn or (lambda m: None)
+    if not isinstance(ham_liste, list) or not ham_liste:
+        return 0
+    _django_hazirla()
+    import django
+    from icra_models.models import Taraf, Vekil, DosyaTaraf
+    sayac = 0
+    with django.db.transaction.atomic():
+        for idx, item in enumerate(ham_liste):
+            if not isinstance(item, dict):
+                continue
+            info = _taraf_bilgisi_ayristir(item)
+            taraf_obj = save_taraf(info, Taraf)
+            vekil_obj = _vekil_kaydet(item.get("vekil"), Vekil, log)
+            rol_kod = tr_lower(item.get("rol", "")) or "diger"
+            DosyaTaraf.objects.update_or_create(
+                dosya=dosya, taraf=taraf_obj, rol=rol_kod,
+                defaults={"sira": idx, "vekil": vekil_obj})
+            sayac += 1
+    return sayac
+
+
 def dosya_detay_goster_ve_kaydet(rec, log_fn=None):
     """Tek giriş noktası (UI'ların çağıracağı): ham arama kaydından (`rec` —
-    `search_phrase_detayli.ajx` satırı, TAZE 'dosyaId' içermeli) ayrıntıyı
-    çeker, ilgili `Dosya`'yı doğal anahtarıyla (birim+yıl+sıra+tür) bulur ve
-    kaydeder. Döner: (ham:dict, aile:str|None, kaydedildi:bool, hata:str|None)
-    — `hata` doluysa `ham`/`aile` boş/None olabilir, UI kullanıcıya `hata`yı
-    göstermeli."""
+    `search_phrase_detayli.ajx` satırı, TAZE 'dosyaId' içermeli) ayrıntı VE
+    taraf bilgilerini çeker, ilgili `Dosya`'yı doğal anahtarıyla
+    (birim+yıl+sıra+tür) bulur ve kaydeder. Döner: (ham:dict, aile:str|None,
+    kaydedildi:bool, hata:str|None, taraflar:list) — `hata` doluysa
+    `ham`/`aile` boş/None olabilir, UI kullanıcıya `hata`yı göstermeli.
+    `taraflar`, `dosya_taraf_getir`'in ham (UYAP şekilli) listesidir; ayrıntı
+    başarısız olsa bile boş liste olarak döner (asla None)."""
     log = log_fn or (lambda m: None)
     dosya_id = str((rec or {}).get("dosyaId", "") or "")
     if not dosya_id:
         return {}, None, False, ("Bu kayıtta 'dosyaId' yok (DB önbelleğinden "
-                                  "geliyor olabilir) — listeyi yenileyip tekrar deneyin.")
+                                  "geliyor olabilir) — listeyi yenileyip tekrar deneyin."), []
     ham = dosya_ayrinti_getir(dosya_id, log)
     if not ham:
-        return {}, None, False, "Dosya ayrıntısı alınamadı (bağlantı/oturum sorunu olabilir)."
+        return {}, None, False, "Dosya ayrıntısı alınamadı (bağlantı/oturum sorunu olabilir).", []
     try:
         _django_hazirla()
         from icra_models.models import Dosya
@@ -476,9 +572,15 @@ def dosya_detay_goster_ve_kaydet(rec, log_fn=None):
             birim__birim_id=birim_id, yil=yil, sira_no=sira, tur_kod=tur_kod)
     except Exception as e:
         return ham, None, False, (f"Dosya yerel veritabanında bulunamadı (önce "
-                                   f"Sorgula/senkron ile kaydedilmeli olabilir): {e}")
+                                   f"Sorgula/senkron ile kaydedilmeli olabilir): {e}"), []
     aile, kaydedildi = dosya_ayrinti_kaydet(dosya, ham, log)
-    return ham, aile, kaydedildi, None
+    taraflar = dosya_taraf_getir(dosya_id, log)
+    if taraflar:
+        try:
+            dosya_taraf_kaydet(dosya, taraflar, log)
+        except Exception as e:
+            log(f"⚠️ Taraf bilgileri kaydedilemedi: {e}")
+    return ham, aile, kaydedildi, None, taraflar
 
 
 # ── Genel "Dosyalarım" (çoklu yargı türü) — DB tarama + filtre ──────────────

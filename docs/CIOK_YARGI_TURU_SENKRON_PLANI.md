@@ -509,11 +509,39 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
   düzeltildi. `DATABASES["default"]["OPTIONS"]["connect_timeout"] = 3`
   eklendi — doğrulandı: aynı DB-erişilemez senaryo artık 130s yerine 3.46s.
 
+- **Faz 8 — Hukuk (ve genel) Taraf Bilgileri uç noktası — TAMAMLANDI**
+  (2026-07-10): canlı doğrulandı — klasik `avukat.uyap.gov.tr`'ye (kendi
+  sistemimiz değil, doğrudan e-imza) Chrome ile giriş yapılıp bir Hukuk dava
+  dosyasının "Taraf Bilgileri" sekmesi açılarak ağ trafiği (fetch/XHR hook)
+  yakalandı. Uç nokta: **`dosya_taraf_bilgileri_brd.ajx`** (POST, gövde
+  `{"dosyaId": "<taze dosyaId>"}` — `dosyaAyrintiBilgileri_brd.ajx` ile AYNI
+  gövde şekli). Yanıt: `list[{"adi": str, "rol": "Davacı"|"Davalı", "vekil":
+  "[AD SOYAD]" (vekil yoksa anahtar HİÇ YOK), "kisiKurum": "Kişi"|"Kurum"}]`
+  — TCKN/MERSİS/vergi no VERMEZ. Yalnız Hukuk canlı test edildi; diğer yargı
+  türlerinde aynı uç nokta varsayılıyor (dosya_islem_turleri_sorgula_brd.ajx
+  yanıtındaki ortak "taraf_bilgileri" modülünden), AYRI doğrulanmadı — hata
+  durumunda sessizce boş liste döner, UI'ı bozmaz.
+  Kod: `dosya_core.py`'ye `dosya_taraf_getir`/`_taraf_bilgisi_ayristir`/
+  `_vekil_kaydet`/`dosya_taraf_kaydet` eklendi; `dosya_detay_goster_ve_kaydet`
+  artık 5'li tuple döner (`..., taraflar`) — ayrıntı + taraf TEK çağrıda
+  gelir. `models.DosyaTaraf.Rol`'e `DAVACI`/`DAVALI` eklendi (migration 0005)
+  — `İcra`'nın kendi `alacakli`/`borclu` akışına DOKUNULMADI. Her iki UI
+  (`icra_dosyalarim.py`, `dosyalarim_genel.py`, `icra.js`, `dosyalarim_genel.js`,
+  web `server.py`'nin `icra_detay`/`dosyalarim_detay`) "Dosya Görüntüle"
+  çıktısına Taraf Bilgileri listesini ekleyecek şekilde güncellendi.
+  Doğrulama: gerçek `.venv` altında `py_compile` + izole testler (canlı
+  yakalanan tam JSON üzerinde `_taraf_bilgisi_ayristir`/`_vekil_kaydet`
+  ayrıştırma, DB/proxy kapalıyken hata yollarının 5'li tuple ile hızlı/temiz
+  dönmesi) + `panel.py --selftest` + web sunucusu (güvenli harness,
+  `_load_auth()` ÇAĞRILMADAN) ile `/api/dosyalarim/detay` uçtan uca test
+  edildi. Canlı UYAP ile TAM uçtan uca (gerçek DB'ye kayıt) hâlâ ayrı
+  doğrulanmadı.
+
 - **Kalan (henüz yapılmadı):** Dosya Bilgileri ayrıntısının UYDURULMAYAN
   kalan alanları (faiz/masraf ayrıntısı, ilgili/seri/birleşen dosya
   listeleri, başvuruya bırakılma tarihi — canlı JSON dökümü yapıldığında
-  tamamlanacak), taraf (Taraf Bilgileri sekmesi) çekimi için Hukuk'un
-  `dosya_borclu_list.ajx` karşılığının bulunması (sıradaki madde). Ayrıca
-  ileride istenirse: zamanlayıcı aralığının (şu an sabit 30 dk) bir ayar
-  ekranından değiştirilebilir hâle getirilmesi, "stale dosyaId" davranışının
-  canlı doğrulanması (bkz. Faz 5 "kabul edilmiş bilinmeyen").
+  tamamlanacak). Taraf Bilgileri uç noktasının Hukuk dışı yargı türlerinde
+  (Ceza, İdari Yargı vb.) ayrı canlı doğrulanması. Ayrıca ileride istenirse:
+  zamanlayıcı aralığının (şu an sabit 30 dk) bir ayar ekranından
+  değiştirilebilir hâle getirilmesi, "stale dosyaId" davranışının canlı
+  doğrulanması (bkz. Faz 5 "kabul edilmiş bilinmeyen").

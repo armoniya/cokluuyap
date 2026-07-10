@@ -215,6 +215,8 @@ class DosyaTaraf(models.Model):
     class Rol(models.TextChoices):
         ALACAKLI = "alacakli", "Alacaklı"
         BORCLU = "borclu", "Borçlu"
+        DAVACI = "davaci", "Davacı"
+        DAVALI = "davali", "Davalı"
 
     dosya = models.ForeignKey(Dosya, on_delete=models.CASCADE, related_name="taraf_baglari")
     taraf = models.ForeignKey(Taraf, on_delete=models.PROTECT, related_name="dosya_baglari")

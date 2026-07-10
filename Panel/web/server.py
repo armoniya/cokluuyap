@@ -873,10 +873,10 @@ def dosyalarim_detay(data):
         "dosyaId": data.get("dosyaId", ""), "birimId": data.get("birimId", ""),
         "dosyaNo": data.get("dosyaNo", ""), "dosyaTurKod": data.get("dosyaTurKod", 0),
     }
-    ham, aile, kaydedildi, hata = _dosya.dosya_detay_goster_ve_kaydet(rec, lambda m: None)
+    ham, aile, kaydedildi, hata, taraflar = _dosya.dosya_detay_goster_ve_kaydet(rec, lambda m: None)
     if hata:
         return {"ok": False, "msg": hata}
-    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham}
+    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham, "taraflar": taraflar}
 
 
 def dosyalarim_yenile_baslat(token):
@@ -1066,10 +1066,10 @@ def icra_detay(token, data):
         return {"ok": False, "msg": "Seçili satır bulunamadı; listeyi yenileyin."}
     if _dosya is None:
         return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil."}
-    ham, aile, kaydedildi, hata = _dosya.dosya_detay_goster_ve_kaydet(rec, job.log)
+    ham, aile, kaydedildi, hata, taraflar = _dosya.dosya_detay_goster_ve_kaydet(rec, job.log)
     if hata:
         return {"ok": False, "msg": hata}
-    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham}
+    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham, "taraflar": taraflar}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
