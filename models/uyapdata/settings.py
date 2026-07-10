@@ -84,6 +84,14 @@ DATABASES = {
         "PASSWORD": os.environ.get("UYAP_DB_PASSWORD", ""),
         "HOST": os.environ.get("UYAP_DB_HOST", "127.0.0.1"),
         "PORT": os.environ.get("UYAP_DB_PORT", "5432"),
+        # connect_timeout YOKSA psycopg (v3, .venv'de kullanılan sürücü) DB
+        # erişilemezken saniyeler değil DAKİKALAR sürebiliyor (2026-07-10
+        # /verify'de canlı ölçüldü: 130s — psycopg2 hızlı "refused" verirken
+        # v3 aynı reddi çok geç fark ediyor). dosya_core.py'nin tüm sorguları
+        # (zamanlayıcı, Dosyalarım ekranları) bu ayarı miras alır; kısa
+        # timeout, DB kapalıyken kullanıcıyı dakikalarca beklemek yerine
+        # hızlı ve net bir hataya götürür.
+        "OPTIONS": {"connect_timeout": 3},
     }
 }
 
