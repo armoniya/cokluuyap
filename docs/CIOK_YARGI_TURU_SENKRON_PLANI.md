@@ -621,16 +621,17 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
   kod da (en uzunu dahil) doğru kaydedildi, `get_rol_display()` doğru
   Türkçe etiketi döndürdü. Commit: bkz. altında.
 
+- **Tazminat Komisyonu Başkanlığı — kullanıcı kararıyla ATLANDI (2026-07-11):**
+  bu kullanıcının bu türde dosyası yok (gerçek yanıt `[[],0]`), canlı
+  doğrulama şu an mümkün değil; kullanıcı "atlayalım" diyerek bu kalemi
+  kapattı. `rol` alanının `max_length=20`'si bu tür için hâlâ TAHMİNİ bir
+  pay olarak kalıyor (Cbs'nin aksine kesinleşmedi) — ileride bu türde bir
+  dosya açılırsa yeniden ele alınabilir, aksi istenmedikçe iş kalemi değil.
+
 - **Kalan (henüz yapılmadı):** Dosya Bilgileri ayrıntısının UYDURULMAYAN
   kalan alanları (faiz/masraf ayrıntısı, ilgili/seri/birleşen dosya
   listeleri, başvuruya bırakılma tarihi — canlı JSON dökümü yapıldığında
-  tamamlanacak). Taraf Bilgileri uç noktasının Tazminat Komisyonu
-  Başkanlığı'nda canlı doğrulanması (bu kullanıcının o türde dosyası
-  olmadığı için şu an mümkün değil — yeni bir dosya açıldığında tekrar
-  denenebilir). Cbs artık KESİN: sunucu yetki hatası döndürüyor, taraf verisi
-  hiç gelmiyor — `max_length=20`'nin Cbs için TAHMİN olma durumu ortadan
-  kalktı (Cbs zaten hiç rol değeri üretmeyecek); yalnız Tazminat Komisyonu
-  için hâlâ doğrulanmamış bir pay olarak kalıyor. Gerçek PostgreSQL ile uçtan uca DB yazma testi (bu
+  tamamlanacak). Gerçek PostgreSQL ile uçtan uca DB yazma testi (bu
   geliştirme ortamında embedded Postgres yok). Ayrıca ileride istenirse:
   zamanlayıcı aralığının (şu an sabit 30 dk) bir ayar ekranından değiştirilebilir hâle getirilmesi,
   "stale dosyaId" davranışının canlı doğrulanması (bkz. Faz 5 "kabul
