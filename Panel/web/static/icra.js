@@ -8,6 +8,7 @@
   var sorgulaBtn = $("icra-sorgula");
   if (!sorgulaBtn) return;
   var temizleBtn = $("icra-temizle"), statusEl = $("icra-status"), sayacEl = $("icra-sayac");
+  var detayBtn = $("icra-detay");
   var durumSel = $("icra-durum"), headEl = $("icra-head"), filterRow = $("icra-filter-row"),
       bodyEl = $("icra-body"), logEl = $("icra-log");
 
@@ -15,6 +16,7 @@
   var rows = [];           // [[değer...], ...] sunucudan
   var filters = {};        // colKey -> filtre kutusu <input>
   var sinceLog = 0, sinceRev = 0, running = false, ready = false, polling = false;
+  var selectedIdx = -1;    // "Dosya Görüntüle" için seçili satırın rows[] içindeki (HAM, filtrelenmemiş) sırası
 
   // Türkçe-duyarsız küçük harf (icra_core.tr_lower eşi) — canlı filtre eşleşmesi için.
   function trLower(s) {
@@ -78,8 +80,13 @@
       if (q) aktif[i] = q;
     });
     var keys = Object.keys(aktif);
-    if (!keys.length) return rows;
-    return rows.filter(function (row) {
+    // Her satırla birlikte ORİJİNAL (ham, filtrelenmemiş) index'i taşı — "Dosya
+    // Görüntüle" sunucuya bu index'i gönderir, sunucudaki job.records de AYNI ham
+    // sırada tutulur (bkz. server.py IcraJob._set_rows).
+    var withIdx = rows.map(function (row, i) { return [i, row]; });
+    if (!keys.length) return withIdx;
+    return withIdx.filter(function (pair) {
+      var row = pair[1];
       return keys.every(function (i) { return trLower(row[i]).indexOf(aktif[i]) >= 0; });
     });
   }
@@ -87,8 +94,15 @@
   function renderRows() {
     var göster = visibleRows();
     bodyEl.innerHTML = "";
-    göster.forEach(function (row) {
+    göster.forEach(function (pair) {
+      var idx = pair[0], row = pair[1];
       var tr = document.createElement("tr");
+      tr.dataset.idx = idx;
+      if (idx === selectedIdx) tr.className = "icra-row-selected";
+      tr.addEventListener("click", function () {
+        selectedIdx = idx;
+        renderRows();
+      });
       row.forEach(function (v) {
         var td = document.createElement("td");
         td.textContent = v == null ? "" : String(v);
@@ -100,6 +114,40 @@
     else if (göster.length !== rows.length) sayacEl.textContent = göster.length + " / " + rows.length + " dosya";
     else sayacEl.textContent = rows.length + " dosya";
   }
+
+  // ── Dosya Görüntüle (Dosya Bilgileri ayrıntısı) ──
+  function dosyaGoruntule() {
+    if (selectedIdx < 0) { statusEl.textContent = "Önce listeden bir dosya seçin."; return; }
+    detayBtn.disabled = true;
+    statusEl.textContent = "Dosya ayrıntısı alınıyor…";
+    post("api/icra/detay", { index: selectedIdx }).then(function (d) {
+      detayBtn.disabled = false;
+      if (!d.ok) { statusEl.textContent = "Dosya ayrıntısı alınamadı"; log("[HATA] " + (d.msg || "")); alert(d.msg || "Dosya ayrıntısı alınamadı."); return; }
+      statusEl.textContent = "Dosya ayrıntısı kaydedildi";
+      var ham = d.ham || {}, satirlar = [];
+      if (d.aile === "icra") {
+        satirlar = [
+          "Takibin Türü: " + (ham.takibinTuru || "—"),
+          "Takibin Şekli: " + (ham.takibinSekli || "—"),
+          "Takibin Yolu: " + (ham.takibinYolu || "—"),
+          "Alacak Kalemi Toplam: " + (ham.alacakKalemToplamTutar || "—"),
+          "Vekalet Ücreti: " + (ham.vekaletUcreti || "—"),
+          "Tahsil Harcı: " + (ham.tahsilHarci || "—")
+        ];
+      } else if (d.aile === "hukuk") {
+        satirlar = [
+          "Dava Açılış Türü: " + (ham.davaAcilisTuru || "—"),
+          "Dava Türleri: " + (ham.davaTurleriStr || "—"),
+          "İlgili Dava Listesi: " + (ham.ilgiliDavaListesiStr || "—"),
+          "Duruşma Tarihi: " + (ham.durusmaTarihi || "—")
+        ];
+      } else {
+        satirlar = ["Bu yargı türü için henüz ayrıntı görüntüleme desteklenmiyor."];
+      }
+      alert(satirlar.join("\n") + (d.kaydedildi ? "\n\n(Yerel veritabanına kaydedildi.)" : ""));
+    }).catch(function (e) { detayBtn.disabled = false; statusEl.textContent = ""; log("[HATA] " + e); });
+  }
+  if (detayBtn) detayBtn.addEventListener("click", dosyaGoruntule);
 
   // ── Taraf türü değişimi (Gerçek Kişi ↔ Kurum) ──
   function tarafTur() {
@@ -146,6 +194,7 @@
      "icra-taraf-tckn", "icra-taraf-kurum-ad", "icra-taraf-vergi", "icra-taraf-mersis"]
       .forEach(function (id) { var e = $(id); if (e) e.value = ""; });
     columns.forEach(function (c) { if (filters[c.key]) filters[c.key].value = ""; });
+    selectedIdx = -1;
     renderRows();
     statusEl.textContent = "";
   }
@@ -166,7 +215,7 @@
       .then(function (s) {
         if (!s || !s.loaded) { polling = false; return; }
         if (s.logs && s.logs.length) { s.logs.forEach(log); sinceLog = s.log_n; }
-        if (s.rows) { rows = s.rows; sinceRev = s.rev; renderRows(); }
+        if (s.rows) { rows = s.rows; sinceRev = s.rev; selectedIdx = -1; renderRows(); }
         else if (typeof s.rev === "number") sinceRev = s.rev;
         if (s.status) statusEl.textContent = "● " + s.status;
         if (s.yeni && s.yeni.length) {

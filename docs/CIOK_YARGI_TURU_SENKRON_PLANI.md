@@ -365,11 +365,91 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
     Canlı DB'ye karşı tam uçtan uca test (Postgres bu makinede kurulu değil)
     hâlâ YAPILMADI.
 
+- **Faz 4 (arka plan senkron zamanlayıcısı) — TAMAMLANDI.** Kullanıcı isteği
+  (2026-07-10): kalan işler arasından en önemlisinden başlanması istendi —
+  ayar ekranı (Faz 3) tek başına işe yaramaz, onu fiilen ÇALIŞTIRAN bir
+  döngü olmadan `SenkronKapsami` yalnızca kayıtlı bir tercih olarak kalırdı.
+  `dosya_core.py`'ye `senkron_zamanlayici_baslat(interval_saniye=None,
+  log_fn=None)`/`senkron_zamanlayici_durdur()` eklendi: daemon thread, her
+  `VARSAYILAN_ARALIK_SANIYE` (1800 sn = 30 dk) aralıkla `DosyaSorgu(log_fn).
+  calistir()` çağırır; süreç başına yalnız bir kez gerçekten başlar (ikinci
+  çağrı çalışan thread'i döner, no-op). UYAP oturumu/proxy ya da DB o an
+  erişilemezse tur sessizce loglanıp bir sonraki aralıkta yeniden denenir —
+  `_load_auth()`/`boot_autoconnect()` gibi YENİ bir oturum AÇMAZ, yalnızca
+  zaten var olan bağlantıyı (127.0.0.1:8800) kullanır, dolayısıyla o riski
+  TAŞIMAZ (bkz. bellek: server-load-auth-canli-giris-tuzagi).
+  - **Web:** `Panel/web/server.py`'nin tek `_load_auth()` çağrısı (süreç
+    başına bir kez, `main()` içinde arka plan thread'inde) `_dosya` başarıyla
+    yüklendiğinde `senkron_zamanlayici_baslat`'ı da çağırır.
+  - **Tkinter:** `Panel/panel.py`'nin `__init__`'i, `_load_auth` thread'ini
+    başlattığı yerin hemen yanında (aynı `--selftest` korumasıyla)
+    `dosya_core.senkron_zamanlayici_baslat`'ı çağırır; log mesajları
+    `self.log_queue`'ya yazılır (mevcut "Bağlantı" modülüyle aynı thread-safe
+    günlük kanalı).
+  - **Bilinen sınırlama (kabul edildi, tasarım gereği):** Aynı makinede hem
+    ofis ajanı (web, kur-unut) hem Tkinter paneli AYNI ANDA açıksa, iki AYRI
+    süreç kendi zamanlayıcısını bağımsız çalıştırır — aynı DB'ye/proxy'ye
+    çakışan taramalar olabilir. Bu, mevcut "adil sıralama" (X-Uyap-Read)
+    tasarımıyla tutarlı (karşılıklı dışlama değil, adalet); ayrı bir
+    kilitleme mekanizması eklenmedi çünkü upsert semantiği (`dosya_kunyesi_
+    kaydet`) zaten tekrarlı yazımlara karşı güvenli.
+  - **Doğrulama:** izole testte (`server._load_auth()`/`boot_autoconnect()`
+    hiç ÇAĞRILMADAN, doğrudan `dosya_core.senkron_zamanlayici_baslat(interval_
+    saniye=1, log_fn=...)`) zamanlayıcı başladı, bir tur çalıştı (DB bu
+    makinede kurulu olmadığı için beklenen "connection refused" hatasını
+    zarifçe yakalayıp logladı), `senkron_zamanlayici_durdur()` ile temiz
+    şekilde durdu (thread `is_alive() == False`). Canlı UYAP oturumu +
+    PostgreSQL ile uçtan uca test hâlâ YAPILMADI (bilinen sınırlama).
+
+- **Faz 5 ("Dosya Görüntüle" — Dosya Bilgileri ayrıntısı) — KISMEN
+  TAMAMLANDI.** Kullanıcının sıralı isteğindeki ikinci madde. İstek şekli
+  TAHMİN DEĞİL — `Panel/modules/Vekalet_Sunma.py`'deki CANLI YAKALANMIŞ akışın
+  7. adımından (`dosyaAyrintiBilgileri_brd.ajx`, payload `{"dosyaId": "..."}`)
+  AYNEN alındı. Yanıt şeklinin YALNIZ bir kısmı canlı doğrulanmıştı (§1.5/§2.5
+  — prose özet, ham JSON dökümü değil); repo genelinde (`Vekalet_Sunma.py`,
+  `Mts_evirme.py`, `htiyati_Haciz.py`, plan dosyası, models.py) arandı, yanıtın
+  TAM ham JSON dökümü hiçbir yerde bulunamadı. **Bu yüzden ingest yalnızca
+  önceden doğrulanmış anahtarları yazar**, geri kalanı UYDURULMAZ:
+  - `dosya_core.py`: `dosya_ayrinti_getir(dosya_id, log_fn)` (transport),
+    `dosya_ayrinti_kaydet(dosya, ham, log_fn)` (aile — `dosya.birim.
+    yargi_turu`'na göre — `IcraTakipDetay`/`HukukDavaDetay`'a yazar, doğrulanan
+    alanlar: İcra için `takibinTuru/Sekli/Yolu`, `alacakKalemToplamTutar`,
+    `vekaletUcreti`, `tahsilHarci`; Hukuk için `davaAcilisTuru`,
+    `davaTurleriStr`, `ilgiliDavaListesiStr`, `durusmaTarihi` — ki bu sonuncusu
+    `ingest._tarih` ile ayrıştırılır, `basvuruyaBirakilmaTarihiStr` biçimi
+    doğrulanmadığı için kaydedilmez, yalnız loglanır), `dosya_detay_goster_ve_
+    kaydet(rec, log_fn)` (tek giriş noktası: `rec`'ten TAZE dosyaId'yi alır,
+    ayrıntıyı çeker, `Dosya`'yı doğal anahtarıyla — birim+yıl+sıra+tür —
+    bulur, kaydeder). Ham yanıt HER ZAMAN log_fn'e yazılır (teşhis) ki canlı
+    doğrulama yapıldığında eksik alanların gerçek adları loglardan okunabilsin.
+  - **Önemli mimari not (Dosya.dosya_id OTURUMLUK):** `models.py`'nin kendi
+    docstring'i `Dosya.dosya_id`'nin UYAP oturumuna göre değişebildiğini
+    söylüyor — bu yüzden `dosya_detay_goster_ve_kaydet` DB'den eski bir
+    dosya_id OKUMAZ, çağıranın o ANKİ arama sonucundan (`rec["dosyaId"]`) TAZE
+    değeri vermesini ister; DB önbelleğinden gelen (henüz bu oturumda
+    sorgulanmamış) kayıtlarda dosyaId boş/eski olabilir, bu durumda açık bir
+    hata mesajıyla (listeyi yenileyin) geri döner.
+  - **Tkinter:** `icra_dosyalarim.py`'ye "Dosya Görüntüle" düğmesi eklendi;
+    tabloya satır seçilip tıklanınca (queue+thread deseniyle, masaüstünün
+    tüm diğer akışlarıyla AYNI) ayrıntı çekilir, `messagebox` ile gösterilir.
+  - **Web:** `icra.js`'e "Dosya Görüntüle" düğmesi + satır seçme (tıklama)
+    eklendi; `server.py`'ye `IcraJob.records` (ham kayıtları AYNI sırada
+    saklar — önceden yalnız serileştirilmiş `rows` tutuluyordu) +
+    `icra_detay()` + `POST /api/icra/detay` eklendi.
+  - **Kapsam:** yalnızca İcra Dosyalarım ekranına eklendi (halihazırda tek
+    çalışan dosya listesi ekranı budur — diğer yargı türleri için henüz genel
+    bir "Dosyalarım" tarama ekranı yok, bkz. altındaki "Kalan").
+  - **Doğrulama:** `py_compile`+`node --check` temiz; izole testte `dosya_id`
+    boş/erişilemez durumlar için hata mesajları doğru döndü. Canlı UYAP +
+    PostgreSQL ile uçtan uca test hâlâ YAPILMADI (bilinen sınırlama).
+
 - **Kalan (henüz yapılmadı):** dosya listesi filtre UI'ı (yargı
   türü/birimi/dosya türü/durumu/açılış tarihi aralığı — hem Tkinter hem
-  web'de), "Dosya Görüntüle" tıklanınca `dosyaAyrintiBilgileri_brd.ajx`
-  çağrılıp `IcraTakipDetay`/`HukukDavaDetay`'a yazılması, taraf (Taraf
+  web'de; bu aynı zamanda diğer yargı türleri için genel bir "Dosyalarım"
+  ekranı gerektirir — şu an yalnız İcra'ya özel `icra_dosyalarim.py` var),
+  Dosya Bilgileri ayrıntısının UYDURULMAYAN kalan alanları (faiz/masraf
+  ayrıntısı, ilgili/seri/birleşen dosya listeleri, başvuruya bırakılma
+  tarihi — canlı JSON dökümü yapıldığında tamamlanacak), taraf (Taraf
   Bilgileri sekmesi) çekimi için Hukuk'un `dosya_borclu_list.ajx` karşılığının
-  bulunması, `SenkronKapsami`'ye göre gerçek arka plan senkron döngüsünün
-  (zamanlayıcı/periyodik `DosyaSorgu.calistir` çağrısı) kurulması — şu an
-  yalnız ayar ekranı var, otomatik çalıştıran bir zamanlayıcı YOK.
+  bulunması. Ayrıca ileride istenirse: zamanlayıcı aralığının (şu an sabit 30
+  dk) bir ayar ekranından değiştirilebilir hâle getirilmesi.

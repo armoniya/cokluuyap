@@ -56,6 +56,7 @@ from modules.uretilmis_runner import UretilmisRunner
 from modules.magaza import MagazaPanel
 from modules import logger_core
 from modules import magaza_core
+from modules import dosya_core
 from modules.tray import SystemTray
 
 
@@ -480,6 +481,11 @@ class Panel(tk.Tk):
         self._pending = None
         if "--selftest" not in sys.argv:
             self.after(100, lambda: threading.Thread(target=self._load_auth, daemon=True).start())
+            try:
+                dosya_core.senkron_zamanlayici_baslat(
+                    log_fn=lambda m: self.log_queue.put(str(m) + "\n"))
+            except Exception as e:
+                self.log_queue.put(f"[HATA] Senkron zamanlayıcı başlatılamadı: {e}\n")
 
         self._show_login()
 

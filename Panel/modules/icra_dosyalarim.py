@@ -27,6 +27,7 @@ from tkinter import ttk
 
 from theme import C, RoundButton
 from . import icra_core
+from . import dosya_core
 
 
 class IcraDosyalarimPanel:
@@ -58,6 +59,7 @@ class IcraDosyalarimPanel:
                             "taraf_kurum", "taraf_vergi", "taraf_mersis")}
 
         self.all_records = []
+        self._gorunen_kayitlar = []  # tablo satırı (iid) -> ham kayıt eşlemesi ("Dosya Görüntüle")
         self.columns = []          # tablo kolonları = aktif alanlar (tarih hariç)
         self.sort_key = None
         self.sort_reverse = False
@@ -179,6 +181,8 @@ class IcraDosyalarimPanel:
         self._btn(bar, "Temizle", self.temizle, "ghost").pack(side="left", padx=(8, 0), ipadx=2)
         self.edit_btn = self._btn(bar, "Alanları Düzenle", self.edit_toggle, "ghost")
         self.edit_btn.pack(side="left", padx=(8, 0), ipadx=2)
+        self.detay_btn = self._btn(bar, "Dosya Görüntüle", self._dosya_goruntule, "ghost")
+        self.detay_btn.pack(side="left", padx=(8, 0), ipadx=2)
         self.durum_lbl = tk.Label(bar, text="", bg=C.BG, fg=C.INK_SOFT,
                                   font=self.app.f_small)
         self.durum_lbl.pack(side="right")
@@ -497,11 +501,13 @@ class IcraDosyalarimPanel:
         self.tree.delete(*self.tree.get_children())
         if not self.columns:
             self.sayac_lbl.config(text="")
+            self._gorunen_kayitlar = []
             return
         kayitlar = self._gorunen()
-        for rec in kayitlar:
+        self._gorunen_kayitlar = kayitlar
+        for i, rec in enumerate(kayitlar):
             vals = [self._cell(icra_core.kolon_degeri(rec, c)) for c in self.columns]
-            self.tree.insert("", "end", values=vals)
+            self.tree.insert("", "end", iid=str(i), values=vals)
         toplam = len(self.all_records)
         if not toplam:
             self.sayac_lbl.config(text="")
@@ -780,6 +786,58 @@ class IcraDosyalarimPanel:
             self._log("⚠️ Sorgu hatası: " + veri)
             self._log("   Yerel ofis (127.0.0.1:8800) açık ve UYAP Bağlantısı aktif mi?")
 
+    # ─────────────────────────── Dosya Görüntüle (Dosya Bilgileri ayrıntısı) ──
+    def _dosya_goruntule(self):
+        secim = self.tree.selection()
+        if not secim:
+            self.durum_lbl.config(text="Önce listeden bir dosya seçin.")
+            return
+        try:
+            rec = self._gorunen_kayitlar[int(secim[0])]
+        except (ValueError, IndexError):
+            self.durum_lbl.config(text="Seçili satır bulunamadı; listeyi yenileyin.")
+            return
+        self.detay_btn.set_state("disabled")
+        self.durum_lbl.config(text="Dosya ayrıntısı alınıyor…")
+        threading.Thread(target=self._dosya_goruntule_bg, args=(rec,), daemon=True).start()
+
+    def _dosya_goruntule_bg(self, rec):
+        sonuc = dosya_core.dosya_detay_goster_ve_kaydet(rec, log_fn=self._log)
+        self.result_q.put(("detay", sonuc))
+
+    def _detay_goster(self, sonuc):
+        from tkinter import messagebox
+        self.detay_btn.set_state("normal")
+        ham, aile, kaydedildi, hata = sonuc
+        if hata:
+            self.durum_lbl.config(text="Dosya ayrıntısı alınamadı")
+            messagebox.showerror("Dosya Görüntüle", hata)
+            return
+        self.durum_lbl.config(text="Dosya ayrıntısı kaydedildi")
+        if aile == "icra":
+            satirlar = [
+                f"Takibin Türü: {ham.get('takibinTuru', '') or '—'}",
+                f"Takibin Şekli: {ham.get('takibinSekli', '') or '—'}",
+                f"Takibin Yolu: {ham.get('takibinYolu', '') or '—'}",
+                f"Alacak Kalemi Toplam: {ham.get('alacakKalemToplamTutar', '') or '—'}",
+                f"Vekalet Ücreti: {ham.get('vekaletUcreti', '') or '—'}",
+                f"Tahsil Harcı: {ham.get('tahsilHarci', '') or '—'}",
+            ]
+            baslik = "Dosya Bilgileri — İcra Takip"
+        elif aile == "hukuk":
+            satirlar = [
+                f"Dava Açılış Türü: {ham.get('davaAcilisTuru', '') or '—'}",
+                f"Dava Türleri: {ham.get('davaTurleriStr', '') or '—'}",
+                f"İlgili Dava Listesi: {ham.get('ilgiliDavaListesiStr', '') or '—'}",
+                f"Duruşma Tarihi: {ham.get('durusmaTarihi', '') or '—'}",
+            ]
+            baslik = "Dosya Bilgileri — Hukuk Dava"
+        else:
+            satirlar = ["Bu yargı türü için henüz ayrıntı görüntüleme desteklenmiyor."]
+            baslik = "Dosya Bilgileri"
+        messagebox.showinfo(baslik, "\n".join(satirlar) +
+                             ("\n\n(Yerel veritabanına kaydedildi.)" if kaydedildi else ""))
+
     def temizle(self):
         for v in self.vars.values():
             v.set("")
@@ -822,6 +880,8 @@ class IcraDosyalarimPanel:
                             text=f"DB'den {len(veri)} dosya · Sorgula ile UYAP'tan güncelle")
                 elif tip == "db_son":
                     self._db_son(veri)
+                elif tip == "detay":
+                    self._detay_goster(veri)
                 else:
                     self._sorgu_bitti(tip, veri)
         except queue.Empty:

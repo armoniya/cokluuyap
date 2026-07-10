@@ -22,6 +22,7 @@ Canlı doğrulanan veri (§1, plan dosyası) — TAHMİN YOK:
 
 import os
 import sys
+import threading
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
@@ -359,3 +360,175 @@ class DosyaSorgu:
                 "bulunan": len(kayitlar), "kaydedilen": kaydedilen,
             })
         return toplam, sonuclar
+
+
+# ── "Dosya Görüntüle" — Dosya Bilgileri sekmesi ayrıntısı ────────────────────
+# (docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §2.5/§7 "Kalan")
+# İstek şekli TAHMİN DEĞİL: Panel/modules/Vekalet_Sunma.py'deki CANLI YAKALANMIŞ
+# akışın 7. adımından alındı — {"dosyaId": "..."} tek alanlı payload.
+# Yanıt şeklinin YALNIZ bir kısmı canlı doğrulandı (plan §1.5/§2.5, önceki
+# oturumdan — prose özet, ham JSON dökümü değil). Bu yüzden ingest fonksiyonu
+# YALNIZ doğrulanan anahtarları yazar; geri kalanı (ör. faiz/masraf ayrıntısı,
+# ilgili/seri/birleşen dosya listeleri, başvuruya bırakılma tarihi) UYDURULMAZ,
+# model varsayılanında bırakılır. Ham yanıt log_fn'e yazılır ki canlı doğrulama
+# yapıldığında gerçek anahtar adları buradan (loglardan) okunabilsin.
+DOSYA_AYRINTI_ENDPOINT = "dosyaAyrintiBilgileri_brd.ajx"
+
+
+def dosya_ayrinti_getir(dosya_id, log_fn=None):
+    """`dosyaAyrintiBilgileri_brd.ajx` çağrısı. `dosya_id`, çağrıldığı ANKİ
+    arama oturumunun TAZE 'dosyaId' değeri olmalı (bkz. models.Dosya
+    docstring'i — dosyaId oturumluktur, DB'den eski bir değer okunup buraya
+    verilmemeli). Ağ hatasında ya da beklenmeyen yanıt şeklinde {} döner."""
+    log = log_fn or (lambda *a, **k: None)
+    motor = SorguMotoru(log)
+    try:
+        _status, veri = motor._post(DOSYA_AYRINTI_ENDPOINT, {"dosyaId": str(dosya_id)})
+    except Exception as e:
+        log(f"⚠️ Dosya ayrıntısı alınamadı: {e}")
+        return {}
+    return veri if isinstance(veri, dict) else {}
+
+
+def _decimal_veya_sifir(deger):
+    from decimal import Decimal, InvalidOperation
+    try:
+        if deger in (None, ""):
+            return Decimal("0")
+        return Decimal(str(deger))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0")
+
+
+def dosya_ayrinti_kaydet(dosya, ham, log_fn=None):
+    """Bir `Dosya` (Django nesnesi) için `dosya_ayrinti_getir`'in ham yanıtını
+    ailesine (İcra/Hukuk) göre `IcraTakipDetay`/`HukukDavaDetay`'a yazar.
+    Aile, kaydın kendi alanından DEĞİL `dosya.birim.yargi_turu`'ndan belirlenir
+    (Dosya'da yargi_turu alanı YOK, §1.6). Diğer yargı türleri için henüz
+    *Detay modeli yok (plan §5) — o durumda hiçbir şey yazılmaz, yalnız
+    loglanır. Döner: ("icra"|"hukuk"|None, kaydedildi:bool)."""
+    log = log_fn or (lambda m: None)
+    if not isinstance(ham, dict) or not ham:
+        log("⚠️ Dosya ayrıntısı boş/geçersiz yanıt — kaydedilmedi.")
+        return None, False
+    log(f"… ham dosya ayrıntısı (teşhis/canlı doğrulama için): {ham}")
+
+    _django_hazirla()
+    from icra_models.models import IcraTakipDetay, HukukDavaDetay
+    from icra_models.ingest import _tarih
+
+    yargi_turu = dosya.birim.yargi_turu
+    if yargi_turu == 2:  # İcra
+        IcraTakipDetay.objects.update_or_create(
+            dosya=dosya,
+            defaults={
+                "takibin_turu": str(ham.get("takibinTuru", "") or ""),
+                "takibin_sekli": str(ham.get("takibinSekli", "") or ""),
+                "takibin_yolu": str(ham.get("takibinYolu", "") or ""),
+                "alacak_kalemi_toplam": _decimal_veya_sifir(ham.get("alacakKalemToplamTutar")),
+                "vekalet_ucreti": _decimal_veya_sifir(ham.get("vekaletUcreti")),
+                "tahsil_harci": _decimal_veya_sifir(ham.get("tahsilHarci")),
+            },
+        )
+        return "icra", True
+    if yargi_turu == 1:  # Hukuk
+        HukukDavaDetay.objects.update_or_create(
+            dosya=dosya,
+            defaults={
+                "dava_acilis_turu": str(ham.get("davaAcilisTuru", "") or ""),
+                "dava_turleri": str(ham.get("davaTurleriStr", "") or ""),
+                "ilgili_dava_listesi": str(ham.get("ilgiliDavaListesiStr", "") or ""),
+                "durusma_tarihi": _tarih(ham.get("durusmaTarihi")),
+            },
+        )
+        if ham.get("basvuruyaBirakilmaTarihiStr"):
+            log("… 'basvuruyaBirakilmaTarihiStr' biçimi henüz canlı doğrulanmadı, "
+                f"kaydedilmedi (ham değer: {ham.get('basvuruyaBirakilmaTarihiStr')!r}).")
+        return "hukuk", True
+    log(f"⚠️ Yargı türü {yargi_turu} için henüz ayrı bir *Detay modeli yok "
+        "(bkz. plan §5) — bu dosya için ayrıntı kaydedilmedi.")
+    return None, False
+
+
+def dosya_detay_goster_ve_kaydet(rec, log_fn=None):
+    """Tek giriş noktası (UI'ların çağıracağı): ham arama kaydından (`rec` —
+    `search_phrase_detayli.ajx` satırı, TAZE 'dosyaId' içermeli) ayrıntıyı
+    çeker, ilgili `Dosya`'yı doğal anahtarıyla (birim+yıl+sıra+tür) bulur ve
+    kaydeder. Döner: (ham:dict, aile:str|None, kaydedildi:bool, hata:str|None)
+    — `hata` doluysa `ham`/`aile` boş/None olabilir, UI kullanıcıya `hata`yı
+    göstermeli."""
+    log = log_fn or (lambda m: None)
+    dosya_id = str((rec or {}).get("dosyaId", "") or "")
+    if not dosya_id:
+        return {}, None, False, ("Bu kayıtta 'dosyaId' yok (DB önbelleğinden "
+                                  "geliyor olabilir) — listeyi yenileyip tekrar deneyin.")
+    ham = dosya_ayrinti_getir(dosya_id, log)
+    if not ham:
+        return {}, None, False, "Dosya ayrıntısı alınamadı (bağlantı/oturum sorunu olabilir)."
+    try:
+        _django_hazirla()
+        from icra_models.models import Dosya
+        from icra_models.ingest import _yil_sira
+        birim_id = str((rec or {}).get("birimId", "") or "")
+        yil, sira = _yil_sira((rec or {}).get("dosyaNo"))
+        tur_kod = int((rec or {}).get("dosyaTurKod", 0) or 0)
+        dosya = Dosya.objects.select_related("birim").get(
+            birim__birim_id=birim_id, yil=yil, sira_no=sira, tur_kod=tur_kod)
+    except Exception as e:
+        return ham, None, False, (f"Dosya yerel veritabanında bulunamadı (önce "
+                                   f"Sorgula/senkron ile kaydedilmeli olabilir): {e}")
+    aile, kaydedildi = dosya_ayrinti_kaydet(dosya, ham, log)
+    return ham, aile, kaydedildi, None
+
+
+# ── Arka plan zamanlayıcı — hem Tkinter hem web SÜREÇ BAŞINA bir kez çağırır ──
+# (docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §7 "Kalan" — otomatik senkron döngüsü)
+# Tek ortak uygulama burada: iki arayüz de kendi sürecinde bu fonksiyonu bir kez
+# çağırır, döngü mantığı İKİ KEZ YAZILMAZ. UYAP oturumu/proxy (127.0.0.1:8800)
+# veya DB o an erişilemezse bir tur sessizce loglanıp bir sonraki aralıkta
+# yeniden denenir — _load_auth()/boot_autoconnect() gibi YENİ bir oturum AÇMAZ,
+# yalnızca zaten var olan bağlantıyı kullanır (bkz. bellek:
+# server-load-auth-canli-giris-tuzagi — bu fonksiyon o riski TAŞIMAZ).
+VARSAYILAN_ARALIK_SANIYE = 1800  # 30 dakika
+
+_zamanlayici_thread = None
+_zamanlayici_dur = None
+
+
+def senkron_zamanlayici_baslat(interval_saniye=None, log_fn=None):
+    """Arka planda periyodik `DosyaSorgu.calistir()` döngüsü başlatır (daemon
+    thread). Süreç başına yalnız bir kez gerçekten başlar; art arda çağrılar
+    (ör. iki panel aynı süreçte dosya_core'u kullanıyorsa) no-op'tur — çalışan
+    thread'i döner. `SenkronKapsami` boşsa `calistir()` zaten hızlıca 0,[]
+    dönüp bir sonraki aralığı bekler; bu normaldir, hata değildir."""
+    global _zamanlayici_thread, _zamanlayici_dur
+    if _zamanlayici_thread is not None and _zamanlayici_thread.is_alive():
+        return _zamanlayici_thread
+    aralik = interval_saniye or VARSAYILAN_ARALIK_SANIYE
+    log = log_fn or (lambda m: None)
+    durdur = threading.Event()
+    _zamanlayici_dur = durdur
+
+    def _dongu():
+        log(f"… otomatik senkron zamanlayıcı başladı ({aralik} sn aralıkla).")
+        while not durdur.is_set():
+            try:
+                toplam, sonuclar = DosyaSorgu(log).calistir()
+                if sonuclar:
+                    log(f"✔ Otomatik senkron turu: {toplam} kayıt tarandı "
+                        f"({len(sonuclar)} kapsam).")
+            except Exception as e:
+                log(f"⚠️ Otomatik senkron turu başarısız (bir sonraki aralıkta "
+                    f"yeniden denenecek): {e}")
+            durdur.wait(aralik)
+        log("… otomatik senkron zamanlayıcı durduruldu.")
+
+    _zamanlayici_thread = threading.Thread(target=_dongu, daemon=True)
+    _zamanlayici_thread.start()
+    return _zamanlayici_thread
+
+
+def senkron_zamanlayici_durdur():
+    """Çalışan zamanlayıcıyı (varsa) bir sonraki uyanışında nazikçe durdurur."""
+    if _zamanlayici_dur is not None:
+        _zamanlayici_dur.set()

@@ -413,6 +413,7 @@ a.conn-btn.inline{color:var(--ink-soft)}
   border-radius:6px;font:inherit;font-size:12.5px;color:var(--ink);background:#fff}
 .icra-colbox:focus{outline:none;border-color:var(--sage)}
 #icra-table thead tr:nth-child(2) th{padding-top:0;padding-bottom:6px}
+#icra-table tbody tr.icra-row-selected{background:var(--sage-tint)}
 
 /* ── MTS Takip Açma ── */
 .mts-ayar{margin:6px 0 14px;padding:14px 16px}

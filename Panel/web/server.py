@@ -202,6 +202,12 @@ def _load_auth():
     except Exception as e:
         _dosya_err = str(e)
         print("[web] Senkron Kapsami modulu yuklenemedi:", e)
+    if _dosya is not None:
+        try:
+            _dosya.senkron_zamanlayici_baslat(
+                log_fn=lambda m: print("[senkron]", m))
+        except Exception as e:
+            print("[web] Senkron zamanlayici baslatilamadi:", e)
     # Kayıtlı kimlik + PIN varsa paylaşım/alım açılışta kendiliğinden başlar
     # (masaüstü uygulama ya da panel girişi GEREKMEZ — "kur-unut" ofis ajanı).
     boot_autoconnect()
@@ -838,6 +844,7 @@ class IcraJob:
         self.lock = threading.Lock()
         self.logs = []
         self.rows = []        # [[kolon değerleri...], ...] (sunum için serileştirilmiş)
+        self.records = []     # AYNI sırada ham UYAP kayıtları (dosyaId dahil) — "Dosya Görüntüle"
         self.rev = 0          # rows her değiştiğinde artar (istemci tazeler)
         self.running = False
         self.status = ""
@@ -853,6 +860,7 @@ class IcraJob:
     def _set_rows(self, records):
         with self.lock:
             self.rows = [[_icra.kolon_degeri(r, c) for c in ICRA_COLUMNS] for r in records]
+            self.records = list(records)
             self.rev += 1
 
     def snapshot(self, since_log, since_rev):
@@ -951,6 +959,28 @@ def icra_search(token, data):
     if not job.start(values, durum_kod):
         return {"ok": False, "msg": "Önceki sorgu sürüyor."}
     return {"ok": True}
+
+
+def icra_detay(token, data):
+    """"Dosya Görüntüle" (masaüstü IcraDosyalarimPanel._dosya_goruntule eşi):
+    `job.records[index]`'teki (aynı sorgudan TAZE 'dosyaId' içeren) ham kaydı
+    `dosya_core.dosya_detay_goster_ve_kaydet`'e verir. `index`, istemcinin
+    (icra.js) tıkladığı satırın HAM (filtrelenmemiş) sırasıdır."""
+    job = ICRA_JOBS.get(token)
+    if job is None:
+        return {"ok": False, "msg": "Önce bir sorgu çalıştırın."}
+    try:
+        idx = int(data.get("index"))
+        with job.lock:
+            rec = job.records[idx]
+    except (TypeError, ValueError, IndexError):
+        return {"ok": False, "msg": "Seçili satır bulunamadı; listeyi yenileyin."}
+    if _dosya is None:
+        return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil."}
+    ham, aile, kaydedildi, hata = _dosya.dosya_detay_goster_ve_kaydet(rec, job.log)
+    if hata:
+        return {"ok": False, "msg": hata}
+    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1891,6 +1921,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "msg": "oturum yok"})
                 return
             self._json(200, icra_search(self._token(), self._body()))
+        elif path == "/api/icra/detay":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            self._json(200, icra_detay(self._token(), self._body()))
         elif path == "/api/uretilmis/run":
             if not self._user():
                 self._json(401, {"ok": False, "msg": "oturum yok"})
