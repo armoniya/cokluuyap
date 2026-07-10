@@ -824,6 +824,95 @@ def senkron_kapsami_kaydet_web(secimler):
         return {"ok": False, "msg": str(e)}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Dosyalarım (Tümü) — masaüstü Panel/modules/dosyalarim_genel.py ile AYNI
+# dosya_core çekirdeğini paylaşır (bkz. plan §7 Faz 6). İcra Dosyalarım'ın
+# aksine CANLI UYAP sorgusu yapmaz (yalnız DB okur); tazelemek isteyen
+# kullanıcı "Yenile"yi tetikler (arka planda DosyaSorgu.calistir), job-tabanlı
+# ilerleme icra_search/IcraJob deseniyle AYNI.
+# ─────────────────────────────────────────────────────────────────────────────
+DOSYALARIM_JOBS = {}   # token -> {"running", "logs", "sonuc"}
+
+
+def dosyalarim_fields():
+    if _dosya is None:
+        return {"ready": False, "err": _dosya_err}
+    return {
+        "ready": True,
+        "yargi_turleri": [{"kod": k, "ad": a} for k, a in _dosya.YARGI_TURLERI],
+        "dosya_turleri": [{"kod": k, "ad": a} for k, a in _dosya.dosya_tur_secenekleri()],
+        "durumlar": [{"kod": k, "ad": a} for k, a in _dosya.dosya_durum_secenekleri()],
+    }
+
+
+def dosyalarim_birimler(yargi_turu):
+    if _dosya is None:
+        return {"birimler": []}
+    try:
+        return {"birimler": _dosya.yargi_birimleri_db_den_yukle(int(yargi_turu))}
+    except Exception:
+        return {"birimler": []}
+
+
+def dosyalarim_list(data):
+    if _dosya is None:
+        return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil.", "kayitlar": []}
+    filtreler = {k: (data.get(k) or None) for k in (
+        "yargi_turu", "yargi_birimi_kod", "tur_kod", "durum_kod",
+        "tarih_baslangic", "tarih_bitis")}
+    try:
+        return {"ok": True, "kayitlar": _dosya.dosyalarim_db_listele(filtreler)}
+    except Exception as e:
+        return {"ok": False, "msg": str(e), "kayitlar": []}
+
+
+def dosyalarim_detay(data):
+    if _dosya is None:
+        return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil."}
+    rec = {
+        "dosyaId": data.get("dosyaId", ""), "birimId": data.get("birimId", ""),
+        "dosyaNo": data.get("dosyaNo", ""), "dosyaTurKod": data.get("dosyaTurKod", 0),
+    }
+    ham, aile, kaydedildi, hata = _dosya.dosya_detay_goster_ve_kaydet(rec, lambda m: None)
+    if hata:
+        return {"ok": False, "msg": hata}
+    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham}
+
+
+def dosyalarim_yenile_baslat(token):
+    if _dosya is None:
+        return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil."}
+    onceki = DOSYALARIM_JOBS.get(token)
+    if onceki and onceki["running"]:
+        return {"ok": False, "msg": "Önceki yenileme sürüyor."}
+    job = DOSYALARIM_JOBS[token] = {"running": True, "logs": [], "sonuc": None}
+
+    def _log(m):
+        job["logs"].append(str(m))
+
+    def _run():
+        try:
+            toplam, sonuclar = _dosya.dosyalarim_yenile(_log)
+            job["sonuc"] = {"toplam": toplam, "sonuclar": sonuclar}
+        except Exception as e:
+            job["sonuc"] = {"hata": str(e)}
+        finally:
+            job["running"] = False
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True}
+
+
+def dosyalarim_yenile_durum(token, since_log):
+    job = DOSYALARIM_JOBS.get(token)
+    if job is None:
+        return {"loaded": False}
+    return {
+        "loaded": True, "running": job["running"],
+        "logs": job["logs"][since_log:], "log_n": len(job["logs"]),
+        "sonuc": job["sonuc"] if not job["running"] else None,
+    }
+
+
 def _icra_birlestir(db_kayitlar, canli):
     """DB + canlı kayıtları birim+dosyaNo ile birleştirir (masaüstü _birlestir eşi);
     canlı taze olduğu için onu tercih eder, canlıda olmayan DB dosyalarını korur."""
@@ -1733,6 +1822,31 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 yargi_turu = -1
             self._json(200, senkron_kapsami_yenile(yargi_turu))
+        elif path == "/api/dosyalarim/fields":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            self._json(200, dosyalarim_fields())
+        elif path == "/api/dosyalarim/birimler":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                yargi_turu = int(q.get("yargi_turu", ["-1"])[0])
+            except Exception:
+                yargi_turu = -1
+            self._json(200, dosyalarim_birimler(yargi_turu))
+        elif path == "/api/dosyalarim/yenile-durum":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                since_log = int(q.get("log", ["0"])[0])
+            except Exception:
+                since_log = 0
+            self._json(200, dosyalarim_yenile_durum(self._token(), since_log))
         elif path == "/api/icra/status":
             if not self._user():
                 self._json(401, {"error": "oturum yok"})
@@ -1926,6 +2040,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "msg": "oturum yok"})
                 return
             self._json(200, icra_detay(self._token(), self._body()))
+        elif path == "/api/dosyalarim/list":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            self._json(200, dosyalarim_list(self._body()))
+        elif path == "/api/dosyalarim/detay":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            self._json(200, dosyalarim_detay(self._body()))
+        elif path == "/api/dosyalarim/yenile":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            self._json(200, dosyalarim_yenile_baslat(self._token()))
         elif path == "/api/uretilmis/run":
             if not self._user():
                 self._json(401, {"ok": False, "msg": "oturum yok"})

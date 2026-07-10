@@ -433,6 +433,49 @@
       <div class="store-grid" id="store-grid"></div>
     </section>
 
+    <!-- Dosyalarım (Tümü) -->
+    <section class="panel" data-panel="dosyalarim_genel">
+      <h1 class="h1">Dosyalarım (Tümü)</h1>
+      <p class="sub">Senkron Kapsamı'nda seçilen tüm yargı türü/birimlerindeki dosyalar.
+        Bu liste yerel veritabanından gelir; UYAP'tan tazelemek için “Yenile”'yi kullanın.</p>
+
+      <div class="conn-card icra-criteria">
+        <div class="icra-row">
+          <label class="icra-k">Yargı Türü</label>
+          <select id="dg-tur"><option>Tümü</option></select>
+          <label class="icra-k">Yargı Birimi</label>
+          <select id="dg-birim"><option>Tümü</option></select>
+          <label class="icra-k">Dosya Türü</label>
+          <select id="dg-dosya-tur"><option>Tümü</option></select>
+          <label class="icra-k">Durum</label>
+          <select id="dg-durum"><option>Tümü</option></select>
+        </div>
+        <div class="icra-row">
+          <label class="icra-k">Açılış Tarihi</label>
+          <input type="text" id="dg-tarih-bas" class="icra-inp" placeholder="GG.AA.YYYY">
+          <span class="icra-dash">–</span>
+          <input type="text" id="dg-tarih-bit" class="icra-inp" placeholder="GG.AA.YYYY">
+        </div>
+      </div>
+
+      <div class="sgk-toolbar">
+        <button class="conn-btn inline" id="dg-filtrele">Filtrele</button>
+        <button class="conn-btn ghost inline" id="dg-temizle">Temizle</button>
+        <button class="conn-btn ghost inline" id="dg-yenile">Yenile (UYAP'tan Güncelle)</button>
+        <button class="conn-btn ghost inline" id="dg-detay">Dosya Görüntüle</button>
+        <span class="conn-status" id="dg-status"></span>
+      </div>
+
+      <div class="sgk-tablewrap">
+        <table class="sgk-table" id="dg-table">
+          <thead><tr id="dg-head"></tr></thead>
+          <tbody id="dg-body"></tbody>
+        </table>
+      </div>
+
+      <div class="logbox" id="dg-log"></div>
+    </section>
+
     <!-- Senkron Kapsamı -->
     <section class="panel" data-panel="senkron_kapsami">
       <div class="panel-head">
@@ -577,6 +620,7 @@
 <script src="static/mts.js"></script>
 <script src="static/logger.js"></script>
 <script src="static/uretilmis.js"></script>
+<script src="static/dosyalarim_genel.js"></script>
 <script src="static/senkron_kapsami.js"></script>
 <script src="static/settings.js"></script>
 </body>

@@ -442,14 +442,66 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
   - **Doğrulama:** `py_compile`+`node --check` temiz; izole testte `dosya_id`
     boş/erişilemez durumlar için hata mesajları doğru döndü. Canlı UYAP +
     PostgreSQL ile uçtan uca test hâlâ YAPILMADI (bilinen sınırlama).
+  - **Kabul edilmiş bilinmeyen (doğrulanmadı, uydurulmadı):** Arka plan
+    zamanlayıcısı (Faz 4) her 30 dakikada `Dosya.dosya_id`'yi YENİDEN yazabilir
+    (`dosya_kunyesi_kaydet` upsert eder). Kullanıcı ekranda ESKİ bir
+    `all_records` görüntüsüyle "Dosya Görüntüle"ye tıklarsa gönderilen dosyaId,
+    zamanlayıcının o an DB'ye yazdığı YENİ değerden farklı olabilir. UYAP'ın
+    `dosyaAyrintiBilgileri_brd.ajx`'i böyle "eski ama var olan" bir dosyaId'ye
+    nasıl tepki verdiği (açıkça hata mı verir, yoksa başka bir dosyanın
+    ayrıntısını mı döner) repo genelinde ARANDI (`Vekalet_Sunma.py`,
+    `Mts_evirme.py`) ama hiçbir yerde bulunamadı — CANLI DOĞRULANMADI. Bu
+    yüzden UYDURULMADI/varsayılmadı; ileride canlı test edilmeli.
 
-- **Kalan (henüz yapılmadı):** dosya listesi filtre UI'ı (yargı
-  türü/birimi/dosya türü/durumu/açılış tarihi aralığı — hem Tkinter hem
-  web'de; bu aynı zamanda diğer yargı türleri için genel bir "Dosyalarım"
-  ekranı gerektirir — şu an yalnız İcra'ya özel `icra_dosyalarim.py` var),
-  Dosya Bilgileri ayrıntısının UYDURULMAYAN kalan alanları (faiz/masraf
-  ayrıntısı, ilgili/seri/birleşen dosya listeleri, başvuruya bırakılma
-  tarihi — canlı JSON dökümü yapıldığında tamamlanacak), taraf (Taraf
-  Bilgileri sekmesi) çekimi için Hukuk'un `dosya_borclu_list.ajx` karşılığının
-  bulunması. Ayrıca ileride istenirse: zamanlayıcı aralığının (şu an sabit 30
-  dk) bir ayar ekranından değiştirilebilir hâle getirilmesi.
+- **Faz 6 (genel çoklu-yargı-türü "Dosyalarım" ekranı + filtre UI) —
+  TAMAMLANDI.** Kullanıcının sıralı isteğindeki üçüncü madde; kullanıcıya
+  soruldu ("filtre UI aslında yeni bir genel ekran gerektiriyor, nasıl
+  ilerleyeyim?") ve "genel ekranı yap" onayı alındı. **Mimari karar (§4
+  precedentiyle tutarlı):** `icra_dosyalarim.py`'ye KESİNLİKLE dokunulmadı
+  (kanıtlı modül); yeni, AYRI bir ekran (`dosyalarim_genel.py` / web
+  `dosyalarim_genel.js`) `dosya_core.py`'yi doğrudan kullanır.
+  - **Tasarım farkı (İcra Dosyalarım'dan bilinçli sapma):** bu ekran CANLI
+    UYAP sorgusu YAPMAZ, yalnız yerel DB'yi okur/filtreler (yargı
+    türü/birimi/dosya türü/durum/açılış tarihi aralığı) — çünkü artık
+    `SenkronKapsami` (Faz 3) + arka plan zamanlayıcısı (Faz 4) veriyi zaten
+    sürekli DB'ye indiriyor; birden çok yargı türü/birimi için AYRICA canlı
+    sorgu mantığı yazmak `DosyaSorgu.calistir`'i tekrarlamak olurdu. "Yenile"
+    düğmesi kullanıcı isteğiyle HEMEN `DosyaSorgu.calistir`'i (=
+    `dosya_core.dosyalarim_yenile`) tetikler, DB'yi tazeler.
+  - **`dosya_core.py` eklentileri:** `dosya_tur_secenekleri`/`dosya_durum_
+    secenekleri` (Dosya.Tur/Durum choices'ı UI'a sunar), `dosyalarim_db_
+    listele(filtreler)` (yargi_turu/yargi_birimi_kod/tur_kod/durum_kod/tarih
+    aralığına göre DB sorgusu, 2000 kayıtla sınırlı), `dosyalarim_yenile`
+    (ince sarmalayıcı — `DosyaSorgu.calistir`).
+  - **Tkinter:** `Panel/modules/dosyalarim_genel.py` (yeni,
+    `DosyalarimGenelPanel`) — filtre çubuğu (4 combobox + tarih aralığı),
+    Treeview sonuç tablosu, "Yenile"/"Dosya Görüntüle" düğmeleri (aynı
+    queue+thread+`app.after` deseni). `panel.py` `CEKIRDEK_NAV`'a
+    "Uygulama Mağazası" ile "Senkron Kapsamı" arasına eklendi (çekirdek,
+    her zaman görünür).
+  - **Web:** `index.html`'e `data-panel="dosyalarim_genel"` bölümü + `app.js`
+    CORE listesine eklendi; `static/dosyalarim_genel.js` (yeni) aynı
+    filtre+tablo+Yenile+Dosya Görüntüle akışını uygular. `server.py`'ye
+    `dosyalarim_fields/birimler/list/detay/yenile_baslat/yenile_durum` +
+    `GET/POST /api/dosyalarim/*` uçları eklendi ("Yenile" `icra_search`'teki
+    job-tabanlı arka plan ilerleme desenini izler — `DOSYALARIM_JOBS`).
+  - **"Dosya Görüntüle" bu ekranda:** satırın DB'den okunan `dosyaId`'si
+    doğrudan kullanılır (İcra Dosyalarım'daki gibi HAM bir arama sonucundan
+    değil) — bu yüzden Faz 5'in "kabul edilmiş bilinmeyen" notu (dosyaId
+    OTURUMLUK, DB'den okunanı eski olabilir) BURADA DA geçerlidir; kullanıcı
+    önce "Yenile" ile tazelemeli.
+  - **Doğrulama:** `py_compile`+`node --check`+HTML section denge kontrolü
+    temiz; izole testte (`server._dosya` doğrudan atanarak, `_load_auth()`
+    ÇAĞRILMADAN) `fields`/`birimler`/`list`/`detay`/`yenile_baslat`/`yenile_
+    durum` hepsi DB'siz ortamda beklenen zarif hata mesajlarını döndü,
+    "yenile" job'ı 2 saniyede DB-erişilemez hatasıyla temiz bitti (asılı
+    kalmadı). Canlı UYAP + PostgreSQL ile uçtan uca test hâlâ YAPILMADI.
+
+- **Kalan (henüz yapılmadı):** Dosya Bilgileri ayrıntısının UYDURULMAYAN
+  kalan alanları (faiz/masraf ayrıntısı, ilgili/seri/birleşen dosya
+  listeleri, başvuruya bırakılma tarihi — canlı JSON dökümü yapıldığında
+  tamamlanacak), taraf (Taraf Bilgileri sekmesi) çekimi için Hukuk'un
+  `dosya_borclu_list.ajx` karşılığının bulunması (sıradaki madde). Ayrıca
+  ileride istenirse: zamanlayıcı aralığının (şu an sabit 30 dk) bir ayar
+  ekranından değiştirilebilir hâle getirilmesi, "stale dosyaId" davranışının
+  canlı doğrulanması (bkz. Faz 5 "kabul edilmiş bilinmeyen").

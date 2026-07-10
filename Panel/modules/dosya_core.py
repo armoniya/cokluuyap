@@ -481,6 +481,86 @@ def dosya_detay_goster_ve_kaydet(rec, log_fn=None):
     return ham, aile, kaydedildi, None
 
 
+# ── Genel "Dosyalarım" (çoklu yargı türü) — DB tarama + filtre ──────────────
+# (docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §7 "Kalan" — filtre UI)
+# İcra Dosyalarım'ın aksine bu ekran CANLI UYAP sorgusu yapmaz (yalnız DB
+# okur) — SenkronKapsami'nin (Faz 3/4) zaten doldurduğu veriyi yargı
+# türü/birimi/dosya türü/durum/tarih aralığına göre tarar. Tazelemek isteyen
+# kullanıcı "Yenile" ile `dosyalarim_yenile` (= DosyaSorgu.calistir, arka plan
+# zamanlayıcısıyla AYNI mantık, yalnız HEMEN) çağırır, sonra DB yeniden okunur.
+def dosya_tur_secenekleri():
+    """`Dosya.Tur` (models.py) seçeneklerini döner: list[(kod, ad)]."""
+    _django_hazirla()
+    from icra_models.models import Dosya
+    return [(v, l) for v, l in Dosya.Tur.choices]
+
+
+def dosya_durum_secenekleri():
+    """`Dosya.Durum` (models.py) seçeneklerini döner: list[(kod, ad)]."""
+    _django_hazirla()
+    from icra_models.models import Dosya
+    return [(v, l) for v, l in Dosya.Durum.choices]
+
+
+def dosyalarim_db_listele(filtreler=None):
+    """Yerel DB'deki `Dosya` kayıtlarını (SenkronKapsami'nin doldurduğu)
+    isteğe bağlı filtrelerle döner. `filtreler`: {"yargi_turu": int|None,
+    "yargi_birimi_kod": str|None, "tur_kod": int|None, "durum_kod": int|None,
+    "tarih_baslangic": "GG.AA.YYYY"|None, "tarih_bitis": "GG.AA.YYYY"|None}.
+    DB erişilemezse [] döner. Her kayıt "dosyaId" içerir ama bu DB'den okunan
+    OLABİLİR eski bir değer (bkz. plan §7 Faz 5 "kabul edilmiş bilinmeyen") —
+    'Dosya Görüntüle' güncel olmayabileceğini varsayıp hata durumunda
+    kullanıcıyı 'Yenile'ye yönlendirmelidir."""
+    filtreler = filtreler or {}
+    try:
+        _django_hazirla()
+        from icra_models.models import Dosya
+        qs = Dosya.objects.select_related("birim").all()
+        if filtreler.get("yargi_turu") not in (None, ""):
+            qs = qs.filter(birim__yargi_turu=int(filtreler["yargi_turu"]))
+        if filtreler.get("yargi_birimi_kod"):
+            qs = qs.filter(birim__turu2=filtreler["yargi_birimi_kod"])
+        if filtreler.get("tur_kod") not in (None, ""):
+            qs = qs.filter(tur_kod=int(filtreler["tur_kod"]))
+        if filtreler.get("durum_kod") not in (None, ""):
+            qs = qs.filter(durum_kod=int(filtreler["durum_kod"]))
+        from datetime import datetime
+        if filtreler.get("tarih_baslangic"):
+            try:
+                qs = qs.filter(acilis_tarihi__gte=datetime.strptime(
+                    filtreler["tarih_baslangic"], "%d.%m.%Y"))
+            except ValueError:
+                pass
+        if filtreler.get("tarih_bitis"):
+            try:
+                qs = qs.filter(acilis_tarihi__lte=datetime.strptime(
+                    filtreler["tarih_bitis"], "%d.%m.%Y"))
+            except ValueError:
+                pass
+        qs = qs.order_by("-acilis_tarihi")[:2000]
+        out = []
+        for d in qs:
+            out.append({
+                "dosyaId": d.dosya_id, "birimId": d.birim.birim_id,
+                "yargi_turu": d.birim.yargi_turu,
+                "yargi_turu_adi": YARGI_TURU_ADI.get(d.birim.yargi_turu, ""),
+                "birimAdi": d.birim.ad, "dosyaNo": d.dosya_no,
+                "dosyaTurKod": d.tur_kod, "dosyaTur": d.tur,
+                "dosyaDurumKod": d.durum_kod, "dosyaDurum": d.durum,
+                "acilisTarihi": d.acilis_tarihi.strftime("%d.%m.%Y") if d.acilis_tarihi else "",
+            })
+        return out
+    except Exception:
+        return []
+
+
+def dosyalarim_yenile(log_fn=None):
+    """'Yenile' düğmesi: aktif `SenkronKapsami`'ye göre CANLI UYAP taraması
+    yapar (`DosyaSorgu.calistir` — arka plan zamanlayıcısıyla AYNI mantık,
+    kullanıcı isteğiyle HEMEN). Döner: (toplam, sonuclar) — bkz. calistir."""
+    return DosyaSorgu(log_fn).calistir()
+
+
 # ── Arka plan zamanlayıcı — hem Tkinter hem web SÜREÇ BAŞINA bir kez çağırır ──
 # (docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §7 "Kalan" — otomatik senkron döngüsü)
 # Tek ortak uygulama burada: iki arayüz de kendi sürecinde bu fonksiyonu bir kez
