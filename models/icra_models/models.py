@@ -213,14 +213,29 @@ class DosyaTaraf(models.Model):
     kalbi burasıdır."""
 
     class Rol(models.TextChoices):
+        """Kod değerleri tr_lower()'ın canlı yakalanan UYAP 'rol' string'lerine
+        uyguladığı çıktıdır (bkz. docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §8) —
+        UYDURULMADI, her biri gerçek bir dosyada canlı doğrulandı: İcra/Hukuk/
+        İdari Yargı/Satış Memurluğu/Arabuluculuk. Ceza/İdari Yargı için ayrı
+        canlı doğrulama (2026-07-11)."""
         ALACAKLI = "alacakli", "Alacaklı"
         BORCLU = "borclu", "Borçlu"
         DAVACI = "davaci", "Davacı"
         DAVALI = "davali", "Davalı"
+        SANIK = "sanik", "Sanık"
+        MUSTEKI = "musteki", "Müşteki"
+        UCUNCU_SAHIS = "ucuncu sahis", "Üçüncü Şahıs"
+        HISSEDAR = "hissedar", "Hissedar"
+        TASFIYE_MEMURU = "tasfiye memuru", "Tasfiye Memuru"
+        BASVURUCU = "basvurucu", "Başvurucu"
+        DIGER_TARAF = "diger taraf", "Diğer Taraf"
 
     dosya = models.ForeignKey(Dosya, on_delete=models.CASCADE, related_name="taraf_baglari")
     taraf = models.ForeignKey(Taraf, on_delete=models.PROTECT, related_name="dosya_baglari")
-    rol = models.CharField(max_length=10, choices=Rol.choices)
+    # max_length=20: canlı doğrulanan en uzun değer "tasfiye memuru" (14) — Cbs/
+    # Tazminat Komisyonu Başkanlığı rol string'leri canlı doğrulanamadı (bu
+    # kullanıcının o türlerde dosyası yok), 20 bunlar için de makul bir pay bırakır.
+    rol = models.CharField(max_length=20, choices=Rol.choices)
     vekil = models.ForeignKey(Vekil, on_delete=models.SET_NULL, null=True, blank=True,
                               related_name="temsil_baglari")
     sira = models.PositiveIntegerField(default=0)

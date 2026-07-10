@@ -570,13 +570,54 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
   edildi. Canlı UYAP + gerçek PostgreSQL ile TAM uçtan uca (bu ortamda
   embedded Postgres binary'leri mevcut değil) hâlâ ayrı doğrulanmadı.
 
+  **Diğer yargı türlerinin canlı taraması (2026-07-11):** kullanıcı isteği
+  üzerine tüm Yargı Türü seçeneklerinde ("her yargı birimini de dene")
+  gerçek dosyalar açılıp Taraf Bilgileri yakalandı:
+  - **İdari Yargı** (İDARE MAHKEMESİ, 2026/1003): rol = `Davacı`/`Davalı`
+    — Hukuk ile AYNI, ek kod GEREKMEDİ.
+  - **Ceza** (ASLİYE CEZA MAHKEMESİ, 2026/391): rol = `Sanık`/`Müşteki` —
+    YENİ değerler, `Rol`'e eklendi.
+  - **Satış Memurluğu** (SATIŞ MEMURLUĞU/Tereke, 2026/5): rol içinde
+    `Alacaklı`'nın yanında `Üçüncü Şahıs`/`Hissedar`/`Tasfiye Memuru` de
+    var — YENİ.
+  - **Arabuluculuk** (ARABULUCULUK MERKEZİ, 2026/4855): rol =
+    `Başvurucu`/`Diğer Taraf` — YENİ.
+  - **Cbs** ve **Tazminat Komisyonu Başkanlığı**: CANLI DOĞRULANAMADI.
+    Tazminat Komisyonu'nda gerçek yanıt `[[],0]` geldi (bu kullanıcının bu
+    türde dosyası yok — kod sorunu değil). Cbs'de 4 farklı kombinasyon
+    denendi (İzmir/İstanbul illeri, 2 farklı Cumhuriyet Başsavcılığı birimi,
+    birimsiz) — hiçbirinde arama isteği hiç ateşlenmedi, "Sorgula" butonu
+    "Sorgulanıyor…" durumunda kalıcı olarak kilitlendi (yeniden seçim dahi
+    sıfırlamadı, yalnız tam sayfa yeniden yükleme çözüyor) — UYAP'ın kendi
+    arayüz kısıtlaması, muhtemelen bu kullanıcının Cbs dosyası da yok.
+
+  **Bulunan gerçek hata — `rol` alanı çok kısaydı:** yeni rol string'lerinin
+  `tr_lower()` çıktıları mevcut `max_length=10`'u aşıyordu: `"Üçüncü Şahıs"`
+  → `"ucuncu sahis"` (12), `"Tasfiye Memuru"` → `"tasfiye memuru"` (14),
+  `"Diğer Taraf"` → `"diger taraf"` (11). Bu, Faz 8'in İcra gate'i
+  kaldırıldığından beri (commit `f19709c`) HALİHAZIRDA canlıda mevcut bir
+  hataydı: `dosya_taraf_kaydet` `transaction.atomic()` içinde çalıştığından,
+  gerçek PostgreSQL'de bu uzunluktaki BİR satır bile tüm o dosyanın taraf
+  toplu yazımını (sessizce, `except Exception` yakalıyor) geri alırdı —
+  Ceza/Satış Memurluğu/Arabuluculuk dosyalarında hiçbir taraf kaydedilmezdi.
+  Düzeltme: `DosyaTaraf.Rol`'e 7 yeni değer eklendi (`SANIK`, `MUSTEKI`,
+  `UCUNCU_SAHIS`, `HISSEDAR`, `TASFIYE_MEMURU`, `BASVURUCU`, `DIGER_TARAF`),
+  `rol` alanı `max_length=10`→`20` genişletildi (canlı doğrulanan en uzun
+  değer 14 — Cbs/Tazminat Komisyonu canlı doğrulanamadığından 6 karakterlik
+  pay bırakıldı, TAHMİN olarak işaretlenir). Migration `0006_alter_
+  dosyataraf_rol`. Geçici SQLite ile gerçek ORM üzerinden doğrulandı: 7 yeni
+  kod da (en uzunu dahil) doğru kaydedildi, `get_rol_display()` doğru
+  Türkçe etiketi döndürdü. Commit: bkz. altında.
+
 - **Kalan (henüz yapılmadı):** Dosya Bilgileri ayrıntısının UYDURULMAYAN
   kalan alanları (faiz/masraf ayrıntısı, ilgili/seri/birleşen dosya
   listeleri, başvuruya bırakılma tarihi — canlı JSON dökümü yapıldığında
-  tamamlanacak). Taraf Bilgileri uç noktasının Hukuk/İcra DIŞI diğer yargı
-  türlerinde (Ceza, İdari Yargı vb.) ayrı canlı doğrulanması. Gerçek
-  PostgreSQL ile uçtan uca DB yazma testi (bu geliştirme ortamında embedded
-  Postgres yok). Ayrıca ileride istenirse: zamanlayıcı aralığının (şu an
-  sabit 30 dk) bir ayar ekranından değiştirilebilir hâle getirilmesi,
+  tamamlanacak). Taraf Bilgileri uç noktasının Cbs ve Tazminat Komisyonu
+  Başkanlığı'nda canlı doğrulanması (bu kullanıcının o türlerde dosyası
+  olmadığı için şu an mümkün değil — yeni bir dosya açıldığında tekrar
+  denenebilir; `rol` alanının `max_length=20`'si bu ikisi için TAHMİNİ bir
+  pay, kesin değil). Gerçek PostgreSQL ile uçtan uca DB yazma testi (bu
+  geliştirme ortamında embedded Postgres yok). Ayrıca ileride istenirse:
+  zamanlayıcı aralığının (şu an sabit 30 dk) bir ayar ekranından değiştirilebilir hâle getirilmesi,
   "stale dosyaId" davranışının canlı doğrulanması (bkz. Faz 5 "kabul
   edilmiş bilinmeyen").
