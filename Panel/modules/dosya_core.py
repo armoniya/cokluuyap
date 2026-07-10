@@ -574,22 +574,26 @@ def dosya_detay_goster_ve_kaydet(rec, log_fn=None):
         return ham, None, False, (f"Dosya yerel veritabanında bulunamadı (önce "
                                    f"Sorgula/senkron ile kaydedilmeli olabilir): {e}"), []
     aile, kaydedildi = dosya_ayrinti_kaydet(dosya, ham, log)
-    # İcra dosyalarında taraf (alacaklı/borçlu) zaten icra_core.py'nin CANLI
-    # doğrulanmış 'dosya_borclu_list.ajx' akışıyla dolduruluyor (bkz. IcraSorgu.
-    # ara). Bu yeni uç nokta yalnız Hukuk'ta canlı doğrulandı (2026-07-10);
-    # İcra'da da aynı rol string'lerini (Alacaklı/Borçlu) döndürdüğü VARSAYIM
-    # — canlı test edilemedi (UYAP arayüzü o oturumda takıldı). "Kanıtlanmamış
-    # kodu kanıtlı akışın üstüne yazma" ilkesi gereği (bkz. plan §4 mimari
-    # karar B) İcra'da bu çağrı ATLANIR; yalnız görüntülemede taraflar boş
-    # kalır, DosyaTaraf zaten dolu olduğu için kullanıcı kaybı yoktur.
-    taraflar = []
-    if aile != "icra":
-        taraflar = dosya_taraf_getir(dosya_id, log)
-        if taraflar:
-            try:
-                dosya_taraf_kaydet(dosya, taraflar, log)
-            except Exception as e:
-                log(f"⚠️ Taraf bilgileri kaydedilemedi: {e}")
+    # İcra'da bu uç nokta CANLI DOĞRULANDI (2026-07-11, İzmir Banka Alacakları
+    # İcra Dairesi 2026/89122 dosyası, avukat.uyap.gov.tr Taraf Bilgileri
+    # sekmesi): rol string'leri "Alacaklı"/"Borçlu" — tr_lower() ile icra_core.
+    # py'nin DosyaTaraf.Rol seçenekleriyle ("alacakli"/"borclu") BİREBİR
+    # eşleşiyor. Ayrıca 'dosya_borclu_list.ajx' (icra_core.py'nin kendi
+    # akışı) ile karşılaştırıldı: aynı kişi için adi/soyadi alanları harf
+    # harf aynı ("FİKRİ"/"BOZKUŞ") ve her iki update_or_create çağrısı da
+    # aynı (dosya, taraf, rol) anahtarını kullanıyor — bu yüzden save_taraf'ın
+    # TCKN'siz (ad,soyad) eşleşmesi icra_core'un TCKN'li kaydettiği AYNI Taraf
+    # satırına düşüyor (mevcut tckn'ye dokunulmuyor, sira/vekil güncelleniyor).
+    # icra_core.py yalnız rol="borclu" yazıyor; bu akış ayrıca "alacakli"
+    # satırlarını da (ilk kez) ekliyor — DosyaTaraf.objects.update_or_create
+    # hiçbir zaman silme yapmadığından en kötü ihtimalde kozmetik bir
+    # yinelenen satır oluşur, mevcut kanıtlı veri kaybolmaz.
+    taraflar = dosya_taraf_getir(dosya_id, log)
+    if taraflar:
+        try:
+            dosya_taraf_kaydet(dosya, taraflar, log)
+        except Exception as e:
+            log(f"⚠️ Taraf bilgileri kaydedilemedi: {e}")
     return ham, aile, kaydedildi, None, taraflar
 
 

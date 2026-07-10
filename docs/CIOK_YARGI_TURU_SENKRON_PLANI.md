@@ -530,41 +530,53 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
   "Dosya Görüntüle" çıktısına Taraf Bilgileri listesini ekleyecek şekilde
   güncellendi.
 
-  **İcra'da BİLEREK devre dışı:** `dosya_detay_goster_ve_kaydet`, `aile ==
-  "icra"` olduğunda yeni uç noktayı HİÇ ÇAĞIRMAZ (`taraflar` boş liste
-  döner) — İcra'nın kendi CANLI doğrulanmış `dosya_borclu_list.ajx`
-  akışı (`icra_core.IcraSorgu.ara`) zaten `DosyaTaraf`'ı dolduruyor, yeni
-  (yalnız Hukuk'ta test edilen) uç nokta onun üstüne YAZMAZ. Bu gate advisor
-  incelemesinde bulundu: İcra'da aynı rol string'lerinin (`Alacaklı`/
-  `Borçlu`) `tr_lower` ile mevcut `alacakli`/`borclu` koduna temiz
-  eşleneceği bir VARSAYIMDI, canlı İcra dosyasında test edilemedi (UYAP
-  arayüzü o oturumda "Sorgulanıyor…" durumunda takıldı — SPA'ya doğrudan
-  URL ile girişten kaynaklanan bir hydration sorunu olabilir, kod hatası
-  değil). "Kanıtlanmamış kodu kanıtlı akışın üstüne yazma" ilkesi gereği
-  gate eklendi; İcra dışı (Hukuk + henüz `*Detay` modeli olmayan diğer
-  türler) etkilenmedi.
+  **İcra gate'i KALDIRILDI — canlı doğrulandı (2026-07-11):** önceki
+  sürümde `aile == "icra"` olduğunda yeni uç nokta HİÇ ÇAĞRILMIYORDU (bkz.
+  altında eski gerekçe). Bu kez `avukat.uyap.gov.tr`'ye client-side routing
+  ile (soldaki menüden tıklayarak — doğrudan URL girişi `/dosya-sorgulama`
+  sunucudan 404 alıp SPA'yı "Sorgulanıyor…" durumunda sonsuza kadar
+  kilitliyor, bu KOD HATASI değil UYAP'ın kendi SPA'sının bir hydration
+  kusuru) girilip gerçek bir İcra dosyası (İzmir Banka Alacakları İcra
+  Dairesi 2026/89122) açıldı, hem "Taraf Bilgileri" hem "Borçlu Bilgileri"
+  sekmeleri fetch/XHR hook'uyla yakalandı. Üç zincir halkası da CANLI
+  doğrulandı (varsayım değil):
+  1. Rol string'leri (`"Alacaklı"`/`"Borçlu"`) `tr_lower()` ile mevcut
+     `Rol.ALACAKLI`/`Rol.BORCLU` koduna (`"alacakli"`/`"borclu"`) BİREBİR
+     eşleşiyor.
+  2. Aynı kişi için `dosya_taraf_bilgileri_brd.ajx` (`adi`: "FİKRİ BOZKUŞ")
+     ve icra_core.py'nin kendi `dosya_borclu_list.ajx` akışı (`adi`:
+     "FİKRİ", `soyadi`: "BOZKUŞ", `tcKimlikNo`: "27445828730") harf harf
+     AYNI ad/soyad'ı veriyor — `save_taraf`'ın TCKN'siz (ad,soyad) fallback
+     eşleşmesi icra_core'un TCKN'li kaydettiği AYNI Taraf satırına düşüyor.
+  3. Her iki `DosyaTaraf.objects.update_or_create` çağrısı da aynı
+     `(dosya, taraf, rol)` anahtarını kullanıyor (icra_core.py:752-754 ile
+     dosya_core.py karşılaştırıldı) — bu yüzden borçlu satırı YİNELENMEZ,
+     yalnız güncellenir (`tckn`'e hiç dokunulmaz, çünkü `save_taraf`'ın
+     `defaults` sözlüğü tckn içermez).
+  Ayrıca not: icra_core.py yalnız `rol="borclu"` yazıyor (`rol="alacakli"`
+  hiç yazmıyor) — gate kaldırılınca İcra dosyalarına Alacaklı satırı (vekil
+  bilgisiyle birlikte) İLK KEZ ekleniyor; bu saf bir veri zenginleştirme,
+  çakışma değil.
 
-  Doğrulama: gerçek `.venv` altında `py_compile` + izole testler (canlı
-  yakalanan tam JSON üzerinde `_taraf_bilgisi_ayristir`/`_vekil_kaydet`
-  ayrıştırma, DB/proxy kapalıyken hata yollarının 5'li tuple ile hızlı/temiz
-  dönmesi, İcra/Hukuk gate'inin doğru dallandığı casus-fonksiyonla
-  doğrulandı) + `panel.py --selftest` + web sunucusu (güvenli harness,
+  Doğrulama: gerçek `.venv` altında geçici SQLite ile GERÇEK Django ORM
+  üzerinden uçtan uca senaryo çalıştırıldı — icra_core'un önceden
+  oluşturduğu TCKN'li Borçlu kaydı (1 Taraf, 1 DosyaTaraf) simüle edilip
+  canlı yakalanan tam JSON ile `dosya_taraf_kaydet` çağrıldı: sonuç 2
+  Taraf/2 DosyaTaraf — borçlu satırı YİNELENMEDİ (tckn korundu, sira
+  güncellendi), alacaklı satırı vekille birlikte YENİ eklendi. Tüm
+  assertion'lar geçti. Ayrıca önceki (Hukuk) doğrulaması geçerliliğini
+  korur: `panel.py --selftest` + web sunucusu (güvenli harness,
   `_load_auth()` ÇAĞRILMADAN) ile `/api/dosyalarim/detay` uçtan uca test
-  edildi + `dosya_taraf_kaydet`'in GERÇEK Django ORM yazma yolu (bu ortamda
-  gerçek PostgreSQL YOK — geçici SQLite ayarıyla) canlı yakalanan tam JSON
-  üzerinde çalıştırıldı: 3 Taraf + 2 Vekil (dedup doğru) + 3 DosyaTaraf
-  oluştu, ikinci çağrıda (`update_or_create` idempotency) satır
-  ÇOĞALMADI. Canlı UYAP + gerçek PostgreSQL ile TAM uçtan uca (bu ortamda
+  edildi. Canlı UYAP + gerçek PostgreSQL ile TAM uçtan uca (bu ortamda
   embedded Postgres binary'leri mevcut değil) hâlâ ayrı doğrulanmadı.
 
 - **Kalan (henüz yapılmadı):** Dosya Bilgileri ayrıntısının UYDURULMAYAN
   kalan alanları (faiz/masraf ayrıntısı, ilgili/seri/birleşen dosya
   listeleri, başvuruya bırakılma tarihi — canlı JSON dökümü yapıldığında
-  tamamlanacak). Taraf Bilgileri uç noktasının İcra'da da aynı şekilde
-  çalışıp çalışmadığının canlı doğrulanması (şu an BİLEREK atlanıyor, yukarı
-  bkz.) ve Hukuk dışı diğer yargı türlerinde (Ceza, İdari Yargı vb.) ayrı
-  canlı doğrulanması. Gerçek PostgreSQL ile uçtan uca DB yazma testi (bu
-  geliştirme ortamında embedded Postgres yok). Ayrıca ileride istenirse:
-  zamanlayıcı aralığının (şu an sabit 30 dk) bir ayar ekranından
-  değiştirilebilir hâle getirilmesi, "stale dosyaId" davranışının canlı
-  doğrulanması (bkz. Faz 5 "kabul edilmiş bilinmeyen").
+  tamamlanacak). Taraf Bilgileri uç noktasının Hukuk/İcra DIŞI diğer yargı
+  türlerinde (Ceza, İdari Yargı vb.) ayrı canlı doğrulanması. Gerçek
+  PostgreSQL ile uçtan uca DB yazma testi (bu geliştirme ortamında embedded
+  Postgres yok). Ayrıca ileride istenirse: zamanlayıcı aralığının (şu an
+  sabit 30 dk) bir ayar ekranından değiştirilebilir hâle getirilmesi,
+  "stale dosyaId" davranışının canlı doğrulanması (bkz. Faz 5 "kabul
+  edilmiş bilinmeyen").
