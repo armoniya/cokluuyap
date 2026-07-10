@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UYAP Çalışma Paneli</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+
+<!-- ── Üst başlık ── -->
+<div class="window">
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">U</span>
+    <span class="brand-text">
+      <b>UYAP Çalışma Paneli</b>
+      <small>Hukuk bürosu otomasyonu</small>
+    </span>
+  </div>
+  <div class="top-right">
+    <span class="conn-chip" id="conn-chip">● Bağlantı bekleniyor</span>
+    <span class="top-sep"></span>
+    <span class="top-user" id="top-user"></span>
+    <a class="top-logout" id="logout">Çıkış</a>
+  </div>
+</header>
+
+<div class="app">
+  <!-- ── Sol gezinme (katlanır ağaç) ──
+       İçeriği app.js mağaza kataloğundan DİNAMİK kurar: sahip olunan app
+       yaprakları (üstte, gruplara yerleşir) + çekirdek üçlü (altta, her zaman:
+       UYAP Bağlantısı, Uygulama Mağazası, Ayarlar). Masaüstüyle aynı sahiplik
+       dosyasını paylaşır. -->
+  <aside class="sidebar">
+    <nav class="nav" id="nav"></nav>
+  </aside>
+
+  <!-- ── İçerik ── -->
+  <main class="content">
+
+    <!-- Pano -->
+    <section class="panel active" data-panel="pano">
+      <h1 class="h1">İyi çalışmalar</h1>
+      <p class="sub">Bir modül seçerek başlayın. Her şey tek pencerede, sakin ve dağınıklıktan uzak.</p>
+      <div class="cards">
+        <button class="card accent-sage" data-target="mts">
+          <h3>MTS Takip Aç</h3>
+          <p>Merkezi Takip Sistemi üzerinden toplu takip açılışı.</p>
+          <span class="open">Aç →</span>
+        </button>
+        <button class="card accent-clay" data-target="xml">
+          <h3>XML Takip Aç</h3>
+          <p>İcra takip talebini XML ile hazırlayıp gönderme.</p>
+          <span class="open">Aç →</span>
+        </button>
+        <button class="card accent-blue" data-target="sgk">
+          <h3>Toplu Sorgu (SGK)</h3>
+          <p>Excel listesinden toplu SGK / çalışan sorgulaması.</p>
+          <span class="open">Aç →</span>
+        </button>
+        <button class="card accent-gold" data-target="udf">
+          <h3>UDF Dönüştürücü</h3>
+          <p>Word/PDF belgelerini UYAP UDF biçimine dönüştürme.</p>
+          <span class="open">Aç →</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- UYAP Bağlantısı -->
+    <section class="panel" data-panel="baglanti">
+      <h1 class="h1">UYAP Bağlantısı</h1>
+      <p class="sub">E-imza ile UYAP oturumunu paylaşın ya da bir ofise bağlanın.
+        Oturum sunucuda 127.0.0.1:8800 üzerinde sunulur.</p>
+
+      <div class="conn-grid">
+        <div class="conn-card">
+          <span class="legend">Ofis</span>
+          <h3>Bağlantı Paylaş</h3>
+          <div class="conn-card-body">
+            <label>E-imza PIN kodu</label>
+            <input type="password" id="conn-pin" autocomplete="off">
+            <label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer;margin-top:2px">
+              <input type="checkbox" id="conn-save-pin" style="margin:0">
+              PIN'i bu bilgisayarda kaydet — panel açılınca paylaşım otomatik başlasın
+            </label>
+          </div>
+          <div class="conn-card-actions">
+            <button class="conn-btn" id="conn-share">Bağlantıyı Paylaş</button>
+            <button class="conn-btn ghost" id="conn-share-browser" disabled>Tarayıcıyı Aç (Kendim Gir)</button>
+            <div class="conn-status" id="conn-share-status">● Paylaşım durduruldu</div>
+          </div>
+        </div>
+
+        <div class="conn-card">
+          <span class="legend">İstemci</span>
+          <h3>Bağlantı Al</h3>
+          <div class="conn-card-body">
+            <p class="conn-hint">Ofise bağlanmak için kullanın; yerel ya da dış ağ otomatik seçilir.</p>
+          </div>
+          <div class="conn-card-actions">
+            <button class="conn-btn" id="conn-receive">Bağlantıyı Al</button>
+            <button class="conn-btn ghost" id="conn-receive-browser" disabled>Tarayıcıyı Aç</button>
+            <div class="conn-status" id="conn-receive-status">● Bağlantı yok</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="conn-state" id="conn-state" data-state="idle">
+        <span class="conn-state-dot"></span>
+        <div class="conn-state-body">
+          <strong id="conn-state-title">Bağlantı bekleniyor</strong>
+          <span id="conn-state-sub">Paylaşmak ya da bir ofise bağlanmak için yukarıdan bir işlem başlatın.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- MTS Takip Açma -->
+    <section class="panel" data-panel="mts">
+      <h1 class="h1">MTS Takip Açma</h1>
+      <p class="sub">Merkezi Takip Sistemi üzerinden toplu icra takibi açılışı — panelin
+        UYAP bağlantısı üzerinden (tarayıcısız). “UYAP Bağlantısı” (Paylaş/Al) açık olmalıdır.</p>
+      <p class="conn-hint" id="mts-conn">● Bağlantı kontrol ediliyor…</p>
+
+      <!-- kaynak (XML/Excel) seçim barı -->
+      <div class="sgk-toolbar">
+        <label class="conn-btn inline" for="mts-file">📂 XML / Excel Seç</label>
+        <input type="file" id="mts-file" accept=".xml,.xlsx,.xls" hidden>
+        <button class="conn-btn ghost inline" id="mts-kaldir">Kaldır</button>
+        <span class="conn-status" id="mts-kaynak">Henüz dosya seçilmedi.</span>
+        <span class="conn-status" id="mts-ozet" style="margin-left:auto"></span>
+      </div>
+
+      <!-- mod + il/adliye + dayanak -->
+      <div class="conn-card mts-ayar">
+        <span class="legend">Çalışma Modu</span>
+        <div class="mts-modlar" id="mts-modlar">
+          <label class="icra-radio"><input type="radio" name="mts-mod" value="yok" checked> ⚡ Otomatik</label>
+          <label class="icra-radio"><input type="radio" name="mts-mod" value="tek_tek"> 👁 Tek Tek Onay</label>
+          <label class="icra-radio"><input type="radio" name="mts-mod" value="toplu"> 🗂 Toplu Onay</label>
+        </div>
+        <div class="icra-row" style="margin-top:10px">
+          <label class="icra-k">İl</label>
+          <input type="text" id="mts-il" class="icra-inp" value="İzmir">
+          <label class="icra-k">Adliye</label>
+          <input type="text" id="mts-adliye" class="icra-inp" value="İzmir">
+          <label class="conn-btn ghost inline" for="mts-dayanak-file">📁 Dayanak PDF’leri</label>
+          <input type="file" id="mts-dayanak-file" accept=".pdf" multiple hidden>
+          <span class="conn-status" id="mts-dayanak"></span>
+        </div>
+        <div class="sgk-toolbar" style="margin-top:10px">
+          <button class="conn-btn inline" id="mts-baslat" disabled>▶ Seçili Takipleri Aç</button>
+          <button class="conn-btn ghost inline" id="mts-durdur" disabled>⏹ Durdur</button>
+          <span class="conn-status" id="mts-durum"></span>
+        </div>
+      </div>
+
+      <!-- onay çubuğu (tek_tek / toplu) -->
+      <div class="conn-card mts-onay" id="mts-onay" hidden>
+        <div id="mts-onay-mesaj" class="mts-onay-mesaj"></div>
+        <div id="mts-onay-btns" class="mts-onay-btns"></div>
+      </div>
+
+      <!-- üç sütun -->
+      <div class="mts-cols">
+        <div class="conn-card mts-col">
+          <h3>🧾 Alacaklılar & Vekaletler</h3>
+          <p class="conn-hint">Satıra tıkla → vekalet ata.</p>
+          <table class="sgk-table mts-tv"><thead><tr><th>Alacaklı</th><th>Tk</th><th>Vekalet</th><th>Day.</th></tr></thead>
+            <tbody id="mts-alacakli"></tbody></table>
+        </div>
+        <div class="conn-card mts-col">
+          <h3 id="mts-bekleyen-baslik">⏳ Bekleyen (0)</h3>
+          <div class="sgk-toolbar" style="margin:0 0 6px">
+            <button class="conn-btn ghost inline" id="mts-hepsi">☑ Hepsi</button>
+            <button class="conn-btn ghost inline" id="mts-hicbiri">☐ Hiçbiri</button>
+          </div>
+          <table class="sgk-table mts-tv"><thead><tr><th>✓</th><th>Takip</th></tr></thead>
+            <tbody id="mts-bekleyen"></tbody></table>
+        </div>
+        <div class="conn-card mts-col">
+          <h3 id="mts-acilan-baslik">✓ Açılan (0)</h3>
+          <p class="conn-hint">Açıldıkça/atlandıkça buraya geçer.</p>
+          <table class="sgk-table mts-tv"><thead><tr><th>Durum</th><th>Takip</th></tr></thead>
+            <tbody id="mts-acilan"></tbody></table>
+        </div>
+      </div>
+
+      <!-- detay -->
+      <div class="conn-card mts-detay">
+        <h3 id="mts-detay-baslik">Takip Ayrıntısı</h3>
+        <div id="mts-detay-bilgi" class="mts-detay-bilgi">Bir takip seçin.</div>
+        <div class="mts-detay-tablolar">
+          <div>
+            <b>Borçlular</b>
+            <table class="sgk-table mts-tv"><thead><tr><th>Ad</th><th>Soyad</th><th>Kimlik/Vergi</th></tr></thead>
+              <tbody id="mts-borclu"></tbody></table>
+          </div>
+          <div>
+            <b>Alacak Kalemleri</b>
+            <table class="sgk-table mts-tv"><thead><tr><th>Alacak Adı</th><th>Tutar</th><th>Faiz Oranı</th><th>Faiz Türü</th></tr></thead>
+              <tbody id="mts-kalem"></tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <div class="logbox" id="mts-log"></div>
+    </section>
+
+    <section class="panel" data-panel="xml"></section>
+
+    <!-- İcra · Dosyalarım (Dosya Sorgulama) -->
+    <section class="panel" data-panel="icra_dosyalarim">
+      <h1 class="h1">İcra · Dosyalarım</h1>
+      <p class="sub">UYAP Dosya Sorgulama (İcra · İcra Dairesi). İstekler yerel ofis
+        bağlantısı üzerinden gönderilir; “UYAP Bağlantısı” açık olmalıdır.</p>
+
+      <!-- üst kriter çubuğu: Durum + Açılış Tarih Aralığı -->
+      <div class="conn-card icra-criteria">
+        <div class="icra-row">
+          <label class="icra-k">Durum</label>
+          <select id="icra-durum"></select>
+          <label class="icra-k">Açılış Tarihi</label>
+          <input type="text" id="icra-tarih-bas" class="icra-inp" placeholder="GG.AA.YYYY">
+          <span class="icra-dash">–</span>
+          <input type="text" id="icra-tarih-bit" class="icra-inp" placeholder="GG.AA.YYYY">
+        </div>
+
+        <!-- Taraf ile Ara (gerçek kişi / kurum) -->
+        <div class="icra-row icra-taraf">
+          <label class="icra-k">Taraf ile Ara</label>
+          <label class="icra-radio"><input type="radio" name="icra-taraf-tur" value="gercek" checked> Gerçek Kişi</label>
+          <label class="icra-radio"><input type="radio" name="icra-taraf-tur" value="kurum"> Kurum</label>
+          <span class="icra-taraf-grp" id="icra-taraf-kisi">
+            <input type="text" id="icra-taraf-ad" class="icra-inp" placeholder="Ad">
+            <input type="text" id="icra-taraf-soyad" class="icra-inp" placeholder="Soyad">
+            <input type="text" id="icra-taraf-tckn" class="icra-inp" placeholder="TCKN">
+          </span>
+          <span class="icra-taraf-grp" id="icra-taraf-kurum" hidden>
+            <input type="text" id="icra-taraf-kurum-ad" class="icra-inp wide" placeholder="Kurum Adı">
+            <input type="text" id="icra-taraf-vergi" class="icra-inp" placeholder="Vergi No">
+            <input type="text" id="icra-taraf-mersis" class="icra-inp" placeholder="MERSİS">
+          </span>
+        </div>
+      </div>
+
+      <div class="sgk-toolbar">
+        <button class="conn-btn inline" id="icra-sorgula">Sorgula</button>
+        <button class="conn-btn ghost inline" id="icra-temizle">Temizle</button>
+        <span class="conn-status" id="icra-status"></span>
+        <span class="conn-status" id="icra-sayac" style="margin-left:auto"></span>
+      </div>
+
+      <p class="conn-hint">Başlık altındaki kutulara yazarak sonuçları anında daraltın;
+        Enter ya da “Sorgula” ile UYAP’tan yeniden çekersiniz.</p>
+
+      <div class="sgk-tablewrap">
+        <table class="sgk-table" id="icra-table">
+          <thead>
+            <tr id="icra-head"></tr>
+            <tr id="icra-filter-row"></tr>
+          </thead>
+          <tbody id="icra-body"></tbody>
+        </table>
+      </div>
+
+      <div class="logbox" id="icra-log"></div>
+    </section>
+
+    <!-- UYAP Oturum Kaydı (Logger) -->
+    <section class="panel" data-panel="logger">
+      <h1 class="h1">UYAP Oturum Kaydı</h1>
+      <p class="sub">Tarayıcı, panelin açtığı UYAP bağlantısına bağlanır (ayrı giriş gerekmez).
+        UYAP’ı normal kullandıkça tüm tıklamalar ve ağ trafiği kaydedilir — endpoint
+        çözümlemesi ve modül üretimi için.</p>
+
+      <div class="sgk-toolbar">
+        <button class="conn-btn inline" id="lg-baslat">Başlat</button>
+        <button class="conn-btn ghost inline" id="lg-durdur" disabled>Durdur</button>
+        <button class="conn-btn ghost inline" id="lg-temizle">Günlüğü Temizle</button>
+        <span class="conn-status" id="lg-durum">● Hazır</span>
+      </div>
+
+      <div class="lg-tabs">
+        <button class="lg-tab active" data-tab="gunluk">Canlı Günlük</button>
+        <button class="lg-tab" data-tab="inceleme">Endpoint İnceleme</button>
+      </div>
+
+      <!-- Canlı Günlük -->
+      <div class="lg-pane" data-pane="gunluk">
+        <div class="logbox" id="lg-log" style="min-height:280px"></div>
+        <p class="conn-hint" id="lg-klasor"></p>
+      </div>
+
+      <!-- Endpoint İnceleme -->
+      <div class="lg-pane" data-pane="inceleme" hidden>
+        <div class="sgk-toolbar">
+          <button class="conn-btn ghost inline" id="lg-yenile">Yenile</button>
+          <button class="conn-btn ghost inline" id="lg-sifirla">Kayıtları Sıfırla</button>
+          <button class="conn-btn inline" id="lg-session">Tüm session’u modüle çevir</button>
+        </div>
+        <div class="lg-inceleme">
+          <div class="conn-card lg-eplist">
+            <b>Yakalanan Endpointler</b>
+            <ul id="lg-ep-list"></ul>
+          </div>
+          <div class="lg-detay">
+            <p class="conn-hint">İSTEK — kullanıcı ne verir? (Kova’ya tıkla: 🔒↔✏️↔⚙️ · Parametre’ye tıkla: adlandır)</p>
+            <div class="sgk-tablewrap">
+              <table class="sgk-table" id="lg-istek"><thead><tr id="lg-istek-head"></tr></thead><tbody id="lg-istek-body"></tbody></table>
+            </div>
+            <p class="conn-hint" style="margin-top:10px">YANIT — modül ekranında ne gösterilsin? (Göster’e tıkla: ☑↔☐ · Başlık’a tıkla: yeniden adlandır)</p>
+            <div class="sgk-tablewrap">
+              <table class="sgk-table" id="lg-yanit"><thead><tr><th>Yanıt Alanı</th><th>Örnek Değer</th><th>Göster?</th><th>Ekran Başlığı</th></tr></thead><tbody id="lg-yanit-body"></tbody></table>
+            </div>
+            <div class="sgk-toolbar" style="margin-top:10px">
+              <button class="conn-btn inline" id="lg-uret" disabled>Bu endpoint’ten taslak üret</button>
+              <span class="conn-status" id="lg-uret-durum"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="dava"></section>
+    <section class="panel" data-panel="arabuluculuk"></section>
+    <section class="panel" data-panel="rapor_performans"></section>
+    <section class="panel" data-panel="rapor_gelismeler"></section>
+    <section class="panel" data-panel="rapor_toplu"></section>
+    <section class="panel" data-panel="grup_olustur"></section>
+    <section class="panel" data-panel="grup_duzenle"></section>
+    <section class="panel" data-panel="bana_atanan"></section>
+    <section class="panel" data-panel="benim_atadiklarim"></section>
+
+    <!-- SGK Sorgu -->
+    <section class="panel" data-panel="sgk">
+      <h1 class="h1">SGK Sorgu</h1>
+      <p class="sub">Excel listesindeki dosyalar için toplu SGK sorgusu. Sonuçlar kök dosyaya
+        değil, sunucuda “…_yapilanlar.xlsx” dosyasına yazılır; “İndir” ile alabilirsiniz.
+        UYAP istekleri için “UYAP Bağlantısı” açık olmalı.</p>
+
+      <div class="sgk-toolbar">
+        <label class="conn-btn inline" for="sgk-file">Excel Yükle</label>
+        <input type="file" id="sgk-file" accept=".xlsx,.xlsm" hidden>
+        <button class="conn-btn ghost inline" id="sgk-start" disabled>Sorgula</button>
+        <button class="conn-btn ghost inline" id="sgk-retry" disabled>Hatalıları Tekrar Dene</button>
+        <button class="conn-btn ghost inline" id="sgk-pause" disabled>Duraklat</button>
+        <button class="conn-btn ghost inline" id="sgk-stop" disabled>Durdur</button>
+        <a class="conn-btn ghost inline" id="sgk-download" href="api/sgk/download">İndir</a>
+        <span class="conn-status" id="sgk-status"></span>
+      </div>
+
+      <div class="sgk-queries" id="sgk-queries"></div>
+
+      <div class="sgk-filter">
+        <input type="text" id="sgk-filter" placeholder="Filtre (içerir)…">
+      </div>
+
+      <div class="sgk-main">
+        <div class="sgk-tablewrap">
+          <table class="sgk-table" id="sgk-table">
+            <thead><tr id="sgk-head"></tr></thead>
+            <tbody id="sgk-body"></tbody>
+          </table>
+        </div>
+        <div class="sgk-detail">
+          <div class="detail-title">Hücre Detayı (hücreye tıklayın)</div>
+          <pre id="sgk-detail"></pre>
+        </div>
+      </div>
+
+      <div class="logbox" id="sgk-log"></div>
+    </section>
+
+    <!-- UDF İşlemleri -->
+    <section class="panel" data-panel="udf">
+      <div class="udf-head">
+        <div>
+          <h1 class="h1">UDF İşlemleri</h1>
+          <p class="sub">Word/PDF belgelerini UYAP UDF biçimine dönüştürün ya da hazır bir UDF'i
+            e-imza ile imzalayın. İmzalama, e-imza kartının sunucu makinesinde takılı olmasını gerektirir.</p>
+        </div>
+        <button class="conn-btn ghost inline" id="udf-card-open">⚙ Akıllı Kart Ayarları</button>
+      </div>
+
+      <div class="conn-grid">
+        <!-- Sol kart: Dönüştür (+imzala) -->
+        <div class="conn-card">
+          <span class="legend">Belge → UDF</span>
+          <h3>Dönüştür</h3>
+          <label>Giriş belgesi (.docx, .doc, .pdf)</label>
+          <input type="file" id="udf-file" accept=".docx,.doc,.pdf">
+          <p class="conn-hint" id="udf-fileinfo">Dosya seçilmedi.</p>
+          <div class="udf-actions">
+            <button class="conn-btn inline" id="udf-sign">Dönüştür ve İmzala</button>
+            <button class="conn-btn ghost inline" id="udf-convert">Sadece Dönüştür</button>
+          </div>
+        </div>
+
+        <!-- Sağ kart: hazır UDF'i imzala (sürükle-bırak) -->
+        <div class="conn-card">
+          <span class="legend">Hazır UDF</span>
+          <h3>İmzala</h3>
+          <div class="drop-zone" id="udf-drop">
+            <input type="file" id="udf-sign-file" accept=".udf" hidden>
+            <span class="drop-ico">⤓</span>
+            <span class="drop-text" id="udf-drop-text">UDF dosyasını buraya sürükleyin<br>veya tıklayıp seçin</span>
+          </div>
+          <div class="udf-actions">
+            <button class="conn-btn inline" id="udf-signudf">UDF'i İmzala</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <h3 class="block-title">İşlem Günlüğü ve Doğrulama Raporu</h3>
+        <button class="link-btn" id="udf-clear">Temizle</button>
+      </div>
+      <div class="logbox" id="udf-log"></div>
+      <span class="conn-status" id="udf-status"></span>
+    </section>
+
+    <!-- Uygulama Mağazası -->
+    <section class="panel" data-panel="magaza">
+      <div class="panel-head">
+        <h1 class="h1">Uygulama Mağazası</h1>
+      </div>
+      <p class="sub">İhtiyacınız olan özelliği etkinleştirin; sol menüye anında eklenir.
+        İstemediğinizde kaldırın — çekirdek (UYAP Bağlantısı, Mağaza, Ayarlar) her zaman
+        kalır. Etkinleştirme masaüstü uygulamayla paylaşılır.</p>
+      <div class="store-grid" id="store-grid"></div>
+    </section>
+
+    <!-- Ayarlar -->
+    <section class="panel" data-panel="ayarlar">
+      <div class="panel-head">
+        <h1 class="h1">Ayarlar</h1>
+      </div>
+      <p class="sub">Tercihler bu bilgisayarda güvenle saklanır ve masaüstü uygulamayla paylaşılır.</p>
+
+      <div class="conn-card set-card">
+        <span class="legend">Bağlantı</span>
+        <h3>Program açıldığında UYAP bağlantısı</h3>
+        <p class="conn-hint">Giriş yaptığınızda otomatik olarak hangi bağlantının kurulacağını seçin.</p>
+
+        <div class="set-options" id="set-auto">
+          <label class="set-opt">
+            <input type="radio" name="auto_connect" value="off">
+            <span class="set-opt-body">
+              <b>Kapalı</b>
+              <small>Giriş yaptığınızda bağlantı kurulmaz; gerektiğinde elle başlatırsınız.</small>
+            </span>
+          </label>
+          <label class="set-opt">
+            <input type="radio" name="auto_connect" value="share">
+            <span class="set-opt-body">
+              <b>Bağlantıyı Paylaş (Ofis · e-imza)</b>
+              <small>Girişte e-imza oturumu paylaşılır. Kayıtlı E-imza PIN kodu gerekir
+                (UYAP Bağlantısı ekranında bir kez kaydedilir).</small>
+            </span>
+          </label>
+          <label class="set-opt">
+            <input type="radio" name="auto_connect" value="receive">
+            <span class="set-opt-body">
+              <b>Bağlantıyı Al (İstemci)</b>
+              <small>Girişte ofise istemci olarak bağlanılır. PIN gerekmez.</small>
+            </span>
+          </label>
+        </div>
+        <span class="conn-status" id="set-status"></span>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ── Durum çubuğu ── -->
+<footer class="statusbar">
+  <span id="status">Hazır</span>
+  <span class="muted">127.0.0.1 · yerel</span>
+</footer>
+
+<!-- ── Akıllı Kart Ayarları (açılır pencere / modal) ── -->
+<div class="modal-overlay" id="udf-card-modal" hidden>
+  <div class="modal-card">
+    <span class="legend">E-İmza</span>
+    <h3>Akıllı Kart Ayarları</h3>
+    <p class="conn-hint">İmzalama işlemleri için PKCS#11 sürücüsü ve kart PIN'i.</p>
+    <label>PKCS#11 DLL yolu</label>
+    <input type="text" id="udf-dll" list="udf-dll-list" placeholder="otomatik bulunur" autocomplete="off">
+    <datalist id="udf-dll-list"></datalist>
+    <label>Kart PIN kodu</label>
+    <input type="password" id="udf-pin" autocomplete="off">
+    <div class="modal-actions">
+      <button class="conn-btn ghost inline" id="udf-card-close">Kapat</button>
+      <button class="conn-btn inline" id="udf-card-ok">Tamam</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Sağ alt hızlı menü: ana topa tıkla → 4 renkli kısayol topu açılır ── -->
+<div id="fab" aria-label="Hızlı menü">
+  <button class="fab-item i1 c1" type="button" data-act="1" title="Kısayol 1">
+    <span class="ico">①</span><span class="lbl">Kısayol 1</span></button>
+  <button class="fab-item i2 c2" type="button" data-act="2" title="Kısayol 2">
+    <span class="ico">②</span><span class="lbl">Kısayol 2</span></button>
+  <button class="fab-item i3 c3" type="button" data-act="3" title="Kısayol 3">
+    <span class="ico">③</span><span class="lbl">Kısayol 3</span></button>
+  <button class="fab-item i4 c4" type="button" data-act="4" title="Kısayol 4">
+    <span class="ico">④</span><span class="lbl">Kısayol 4</span></button>
+  <button class="fab-main" id="fab-main" type="button" aria-expanded="false" aria-label="Menü">
+    <span class="ico">＋</span></button>
+</div>
+</div>
+
+<script>
+  // Sağ alt hızlı menü (FAB). Kısayol eylemleri şimdilik YER TUTUCUDUR;
+  // her topun işini aşağıdaki "fabActions" içine yazın.
+  (function () {
+    var fab = document.getElementById("fab");
+    var mainBtn = document.getElementById("fab-main");
+    if (!fab || !mainBtn) return;
+
+    var fabActions = {
+      "1": function () { console.log("[kısayol 1] tıklandı"); },
+      "2": function () { console.log("[kısayol 2] tıklandı"); },
+      "3": function () { console.log("[kısayol 3] tıklandı"); },
+      "4": function () { console.log("[kısayol 4] tıklandı"); }
+    };
+
+    function closeFab() {
+      fab.classList.remove("open");
+      mainBtn.setAttribute("aria-expanded", "false");
+    }
+    mainBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var open = fab.classList.toggle("open");
+      mainBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    Array.prototype.forEach.call(fab.querySelectorAll(".fab-item"), function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var act = btn.getAttribute("data-act");
+        if (fabActions[act]) { try { fabActions[act](); } catch (err) { console.error(err); } }
+        closeFab();
+      });
+    });
+    document.addEventListener("click", function (e) { if (!fab.contains(e.target)) closeFab(); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeFab(); });
+  })();
+</script>
+
+<script src="static/app.js"></script>
+<script src="static/conn.js"></script>
+<script src="static/udf.js"></script>
+<script src="static/sgk.js"></script>
+<script src="static/icra.js"></script>
+<script src="static/mts.js"></script>
+<script src="static/logger.js"></script>
+<script src="static/uretilmis.js"></script>
+<script src="static/settings.js"></script>
+</body>
+</html>

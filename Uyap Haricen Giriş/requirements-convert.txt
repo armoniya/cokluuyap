@@ -1,0 +1,13 @@
+# Ofis tarafı — E-İMZA (udf_signer.py + cades.py): kart imzası için ZORUNLU.
+# PKCS#11 modülü (akisp11.dll/etpkcs11.dll) kart sürücüsüyle gelir, pip'le değil.
+PyKCS11
+cryptography
+
+# Ofis tarafı: Word/PDF → UDF dönüştürme (udf_converter.py) için.
+# Yalnızca .docx/.doc/.pdf imzalanacaksa gerekir; .udf imzalama bunlar olmadan da çalışır.
+python-docx
+pypdf
+Pillow
+PyMuPDF
+# Eski .doc (binary) desteği için MS Word + pywin32 (yalnızca Windows, isteğe bağlı):
+# pywin32

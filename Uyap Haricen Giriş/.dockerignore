@@ -1,0 +1,9 @@
+# Build bağlamına SADECE satıcı sunucusu + statik kabuk girsin.
+# Böylece UYAP giriş kodu, PIN'ler, oturum/çerez dosyaları, e-imza ile ilgili HİÇBİR şey
+# PaaS'ın uzak builder'ına yüklenmez. (Whitelist: önce her şeyi dışla, sonra gerekenleri al.)
+*
+!vendor_server.py
+!requirements-vendor.txt
+!Dockerfile
+!webapp/
+!webapp/**

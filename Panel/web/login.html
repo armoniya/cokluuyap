@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Giriş · UYAP Çalışma Paneli</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body class="login-body">
+
+<div class="login-wrap">
+  <form class="login-card" id="login-form" autocomplete="on">
+    <div class="login-brand">
+      <span class="mark">U</span>
+      <b>UYAP Çalışma Paneli</b>
+    </div>
+    <p class="login-hint">Hesabınızla giriş yapın</p>
+
+    <label for="o">Ofis kodu</label>
+    <input id="o" name="office_code" type="text" autocomplete="organization" autofocus
+           placeholder="büronuzun kodu (ör. kalkan)">
+
+    <label for="u">Kullanıcı adı</label>
+    <input id="u" name="username" type="text" autocomplete="username"
+           placeholder="kullanıcı adınız (ör. veli)">
+
+    <label for="p">Parola</label>
+    <input id="p" name="password" type="password" autocomplete="current-password">
+
+    <label class="remember">
+      <input id="r" type="checkbox"> <span>Bilgilerimi hatırla</span>
+    </label>
+
+    <button class="login-btn" id="login-btn" type="submit">Giriş Yap</button>
+    <div class="login-status" id="login-status"></div>
+  </form>
+</div>
+
+<script src="static/login.js"></script>
+</body>
+</html>

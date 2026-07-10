@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Çalışma kalıntıları ve HASSAS dosyalar — ASLA paylaşma/commit etme
+*.log
+uyap_session_cookies.json      # canlı UYAP oturum çerezleri
+uyap_gui_config.json           # DPAPI-şifreli PIN dahil yerel ayar (makineye özel)
+signaling_config.json          # ortama özel oda/lisans listesi
+accounts.json                  # hesap/lisans deposu (parola hash'leri) — kalıcı diskte tutulur
+static_cache/                  # önbellek (UYAP kabukları)
+*.session

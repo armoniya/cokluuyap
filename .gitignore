@@ -1,0 +1,73 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# UYAP Django / Kararlı — .gitignore
+# Güvenlik raporu (docs/guvenlik_analizi.md) #13 (+ #1 çerezler, #9 config):
+# tarayıcı profilleri/cache'leri, oturum çerezleri, ayar/sır dosyaları ve üretilen
+# artefaktlar sürüm kontrolüne / paylaşıma GİRMEMELİ (UYAP'tan çekilmiş kişisel/dosya
+# verisi ve oturum kimlik bilgileri içerir).
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Tarayıcı profilleri ve cache'leri (hassas: UYAP sayfa/yanıt verisi, oturum) ──
+chrome_profile/
+uyap_profil/
+**/chrome_profile/
+**/uyap_profil/
+**/static_cache/
+Panel/modules/logger_data/
+
+# ── Canlı UYAP oturum çerezleri (= bearer kimlik bilgisi; #1) ──
+uyap_session_cookies.json
+**/uyap_session_cookies.json
+uyap_session.json
+**/uyap_session.json
+
+# ── Django oturum deposu / veritabanı dosyaları (çalışma zamanı verisi) ──
+**/.sessions/
+*.sqlite3
+
+# ── Ayar / sır dosyaları (UYAP parolası + e-imza PIN; #9) ──
+uyap_app_config.json
+**/uyap_app_config.json
+
+# ── Hesap deposu (parola hash'leri, sıfırlama jetonları) ──
+accounts.json
+**/accounts.json
+*.tmp
+
+# ── Logger'ın ürettiği modüller / kayıtlar (oturum verisinden türetilmiş; #11) ──
+uyap_uretilmis_kayit.json
+**/uyap_uretilmis_kayit.json
+
+# ── Yerel-yetki / sır jeton artefaktları ──
+gw_local_token
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── Sanal ortam ──
+.venv/
+venv/
+env/
+
+# ── Üretilen Excel/çıktı artefaktları (kişisel veri içerebilir) ──
+*_Yatay_Alacak_Listesi.xlsx
+
+# ── İşletim sistemi / editör ──
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# ── Ayrı git deposu olan alt-projeler (kendi .git'i var, gitlink hatasını önler) ──
+**/vendor_deploy/
+
+# ── Claude Code yerel makine durumu (paylaşılmaz) ──
+.claude/
+
+# ── Derleme/kurulum çıktıları ve üçüncü parti araçlar (üretilir, kaynak değil) ──
+**/dist/
+**/build/
+Uyap Haricen Giriş/araclar/

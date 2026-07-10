@@ -1,0 +1,96 @@
+{% extends "panel/base.html" %}
+{% load static %}
+{% block title %}Pano · UYAP Ağ Geçidi{% endblock %}
+{% block body %}
+<div class="topbar">
+  <div class="title">UYAP Ağ Geçidi</div>
+  <div>
+    <span class="user">{{ username }}</span>
+    <a class="btn ghost sm" href="{% url 'panel:logout' %}">Çıkış</a>
+  </div>
+</div>
+
+<div class="app">
+  <!-- ── Sol ağaç menü ── -->
+  <aside class="sidebar">
+    <nav class="tree">
+      <button class="tree-item active" data-target="conn">
+        <span class="tw-ico">🔗</span> UYAP Bağlantısı
+      </button>
+      <div class="tree-group">
+        <div class="tree-parent"><span class="tw-ico">📂</span> Takip Açılış</div>
+        <button class="tree-item leaf" data-target="mts">MTS Takip Açılış</button>
+        <button class="tree-item leaf" data-target="icra">XML Takip Açılış</button>
+      </div>
+      <div class="tree-group">
+        <div class="tree-parent"><span class="tw-ico">🔎</span> Sorgular</div>
+        <button class="tree-item leaf" data-target="sgk">SGK Sorgu</button>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- ── İçerik ── -->
+  <main class="content">
+    <!-- ── Bağlantı ── -->
+    <div class="panel active" data-tab="conn">
+      <h2 class="page-title">UYAP Bağlantısı</h2>
+      <div class="grid2">
+        <div class="card">
+          <span class="legend">Ofis</span>
+          <h3>Bağlantı Paylaş</h3>
+          <div class="field">
+            <label>E-imza PIN Kodu</label>
+            <input type="password" id="pin" value="{{ pin }}">
+          </div>
+          <div class="field">
+            <label>Sertifika ID (opsiyonel)</label>
+            <input type="text" id="cert_id" value="{{ cert_id }}">
+          </div>
+          <button class="btn ok block" id="share-btn">Bağlantıyı Paylaş</button>
+          <button class="btn ghost block" id="share-browser" style="margin-top:8px" disabled>Tarayıcıyı Aç (Kendim Gir)</button>
+          <div class="status-dot off" id="share-status">● Paylaşım durduruldu</div>
+        </div>
+
+        <div class="card">
+          <span class="legend">İstemci</span>
+          <h3>Bağlantı Al</h3>
+          <p class="hint">Ofis bilgisayarına bağlanmak için kullanın. Aynı ağdaysanız yerel
+            ağdan, değilseniz dış ağdan otomatik bağlanır.</p>
+          <button class="btn ok block" id="recv-btn" style="margin-top:12px">Bağlantıyı Al</button>
+          <button class="btn ghost block" id="recv-browser" style="margin-top:8px" disabled>Tarayıcıyı Aç</button>
+          <div class="status-dot off" id="recv-status">● Bağlantı yok</div>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <h3 style="margin:0">İşlem Günlüğü</h3>
+        <button class="btn link" id="clear-log">Temizle</button>
+      </div>
+      <div class="logbox" id="conn-log"></div>
+      <p class="hint" style="margin-top:10px">
+        UYAP oturumu <b>127.0.0.1:{{ port }}</b> üzerinde sunulur (bu panel 127.0.0.1:8000'de).
+        "Tarayıcıyı Aç" → <a href="{{ giris_url }}" target="_blank">{{ giris_url }}</a>
+      </p>
+    </div>
+
+    <!-- ── MTS ── -->
+    {% include "panel/_takip_section.html" with kind="mts" title="MTS Takip Açılış" subtitle="Merkezi Takip Sistemi (MTS)" %}
+    <!-- ── İcra / XML ── -->
+    {% include "panel/_takip_section.html" with kind="icra" title="XML Takip Açılış" subtitle="İcra Takip Talebi (XML)" %}
+    <!-- ── SGK Sorgu ── -->
+    {% include "panel/_sgk_section.html" %}
+  </main>
+</div>
+
+<!-- ── Onay modalı ── -->
+<div class="modal-bg" id="modal-bg">
+  <div class="modal">
+    <header id="modal-title">Onay</header>
+    <div class="body" id="modal-body"></div>
+    <footer id="modal-footer"></footer>
+  </div>
+</div>
+
+<script>window.GIRIS_URL = "{{ giris_url }}";</script>
+{% endblock %}
+{% block scripts %}<script src="{% static 'panel/app.js' %}"></script>{% endblock %}

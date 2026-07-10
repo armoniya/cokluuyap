@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Çoklu UYAP Giriş Programı — 5 Aktif Oturum Sorununa Çözüm | cokluuyap.com</title>
+  <meta name="description" content="Tek e-imza ile büronuzun tüm personeli UYAP'a girsin: 5 aktif oturum hatası, eş zamanlı sorgu hatası ve 9. madde kilitlenmesi yaşamadan. Kurulum yok, tarayıcı yeter; veri uçtan uca şifreli P2P tünelden akar." />
+  <link rel="canonical" href="https://www.cokluuyap.com/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Çoklu UYAP" />
+  <meta property="og:locale" content="tr_TR" />
+  <meta property="og:url" content="https://www.cokluuyap.com/" />
+  <meta property="og:title" content="Çoklu UYAP Giriş Programı — 5 Aktif Oturum Sorununa Çözüm" />
+  <meta property="og:description" content="Tek e-imza ile birden fazla kullanıcı: UYAP oturumunu büronuzun her cihazından tarayıcıyla kullanın. Kurulum yok, veri uçtan uca şifreli." />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "Çoklu UYAP",
+        "url": "https://www.cokluuyap.com/",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Web tarayıcısı (Windows, macOS, tablet)",
+        "description": "Tek e-imza ile büronun birden fazla kullanıcısının UYAP Avukat Portal oturumunu güvenle paylaşmasını sağlayan, tarayıcı tabanlı çoklu UYAP giriş programı.",
+        "inLanguage": "tr"
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "UYAP \"aktif 5 oturum\" hatası nedir, nasıl çözülür?",
+            "acceptedAnswer": { "@type": "Answer", "text": "UYAP, bir e-imza ile aynı anda en fazla 5 aktif oturuma izin verir; limit dolunca \"aktif 5 oturum bulunmaktadır\" hatası alırsınız. Çoklu UYAP'ta büro tek bir UYAP oturumunu paylaşır: her personel kendi kullanıcı adıyla bağlanır ama UYAP tarafında tek oturum açık kalır, bu yüzden limit hiç dolmaz." }
+          },
+          {
+            "@type": "Question",
+            "name": "\"Eş zamanlı olarak birden fazla sorgulama yapamazsınız\" uyarısı neden çıkar?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Aynı e-imza ile aynı anda birden fazla sorgu gönderildiğinde UYAP bu uyarıyı verir. Çoklu UYAP tüm istekleri tek çıkış noktasından adil sırayla geçirdiği için eş zamanlı sorgu çakışması oluşmaz." }
+          },
+          {
+            "@type": "Question",
+            "name": "9. madde e-imza kilitlenmesi (3 saatlik blok) nedir?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Farklı IP adreslerinden aynı anda birden çok e-imza girişi tespit edildiğinde Avukat Portal erişimi 3 saatliğine bloke edilir. Çoklu UYAP tek e-imza ve tek çıkış noktası kullandığından bu durum yapısal olarak oluşmaz." }
+          },
+          {
+            "@type": "Question",
+            "name": "Kurulum gerekir mi, hangi cihazlardan girilir?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Personel tarafında kurulum gerekmez; güncel bir tarayıcı yeterlidir. Yalnızca e-imzalı bilgisayarda küçük bir ofis ajanı çalışır. Ofis, ev veya adliyeden — internetin olduğu her yerden erişilir." }
+          },
+          {
+            "@type": "Question",
+            "name": "UYAP verilerim sizin sunucunuzdan mı geçiyor?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Hayır. UYAP verisi, e-imzalı bilgisayar ile personelin cihazı arasında uçtan uca şifreli doğrudan (P2P) bağlantıyla akar; sunucumuz yalnızca iki tarafı buluşturur." }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+  <style>
+    /* Panel web kabuğuyla (Panel/web/static/style.css) AYNI tasarım dili:
+       sakin, ılık-nötr zemin + adaçayı vurgu. Yalnızca görünüm — tünel mantığı DEĞİŞMEZ. */
+    :root {
+      color-scheme: light;
+      --bg:#F1EEE8; --card:#FCFBF8; --card-edge:#E8E2D7; --shadow:rgba(96,86,66,.14);
+      --ink:#43423D; --ink-soft:#8C867B; --ink-faint:#B6AFA2; --line:#E3DDD2;
+      --sage:#7C9A7E; --sage-dk:#5E7D63; --sage-tint:#E4EBE0;
+      --clay:#C18A66; --blue:#7C93AB; --gold:#C8A66A;
+      --radius:16px;
+    }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+    #app {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      border: 0; background: #fff; display: none;
+    }
+    #overlay {
+      position: fixed; inset: 0; z-index: 10;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 18px; background: var(--bg);
+      color: var(--ink); font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+      transition: opacity .4s ease; text-align: center; padding: 24px;
+      overflow-y: auto;  /* SSS açılınca hero kartı viewport'u aşabilir → kaydırılabilir */
+    }
+    #hero.show { margin: auto 0; }  /* flex+overflow'da üstten kırpılmadan ortalar */
+    #overlay.hidden { opacity: 0; pointer-events: none; }
+    .ring {
+      width: 54px; height: 54px; border-radius: 50%;
+      border: 3px solid var(--line); border-top-color: var(--sage);
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .title { font-size: 19px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); }
+    .msg { font-size: 14px; color: var(--ink-soft); max-width: 460px; line-height: 1.5; }
+
+    /* ── Tanıtım (hero) — ürünü anlatan açılış; Giriş Yap / Üye Ol ── */
+    #hero { display: none; flex-direction: column; align-items: center; gap: 14px;
+      width: 520px; max-width: 94vw; background: var(--card);
+      border: 1px solid var(--card-edge); border-radius: var(--radius);
+      box-shadow: 0 14px 40px var(--shadow); padding: 36px 36px 30px; }
+    #hero.show { display: flex; }
+    #hero .logo { display: flex; align-items: center; gap: 11px; margin: 0;
+      font-size: 20px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); }
+    #hero .logo .mark { width: 30px; height: 30px; border-radius: 9px; background: var(--sage);
+      color: #fff; font-weight: 600; display: flex; align-items: center; justify-content: center;
+      font-size: 15px; box-shadow: 0 2px 6px var(--shadow); }
+    #hero .tag { font-size: 14px; color: var(--ink-soft); line-height: 1.6; max-width: 440px; }
+    #hero .feats { list-style: none; padding: 0; margin: 4px 0 6px; display: grid; gap: 8px;
+      text-align: left; width: 100%; max-width: 420px; }
+    #hero .feats li { font-size: 13px; color: var(--ink-soft); line-height: 1.5;
+      background: #FBFAF7; border: 1px solid var(--card-edge); border-radius: 10px;
+      padding: 10px 13px; border-left: 4px solid var(--sage); }
+    #hero .feats li b { color: var(--ink); font-weight: 600; }
+    #hero .cta { display: flex; gap: 12px; margin-top: 6px; width: 100%; max-width: 420px; }
+    #hero .cta button { flex: 1; font-size: 14px; font-weight: 600; padding: 12px 14px;
+      border-radius: 11px; cursor: pointer; border: 0; font-family: inherit;
+      transition: background .12s, box-shadow .12s, border-color .12s, color .12s; }
+    #hero .cta .primary { background: var(--sage); color: #fff; box-shadow: 0 2px 7px var(--shadow); }
+    #hero .cta .primary:hover { background: var(--sage-dk); box-shadow: 0 4px 11px var(--shadow); }
+    #hero .cta .primary:active { transform: translateY(1px); }
+    #hero .cta .ghost { background: var(--card); color: var(--ink-soft);
+      border: 1px solid var(--line); box-shadow: 0 1px 4px var(--shadow); }
+    #hero .cta .ghost:hover { border-color: var(--sage); color: var(--ink); background: var(--sage-tint); }
+    #hero .fine { font-size: 12px; color: var(--ink-faint); }
+    /* SSS: varsayılan kapalı <details> — kart yüksekliğini az büyütür, içerik yine DOM'da (SEO) */
+    #hero .faq { width: 100%; max-width: 420px; text-align: left; margin-top: 10px;
+      border-top: 1px solid var(--line); padding-top: 12px; }
+    #hero .faq h2 { font-size: 13px; font-weight: 600; color: var(--ink-soft);
+      margin: 0 0 8px; letter-spacing: .02em; }
+    #hero .faq details { border: 1px solid var(--card-edge); border-radius: 10px;
+      background: #FBFAF7; margin-bottom: 6px; padding: 0; }
+    #hero .faq summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--ink);
+      padding: 9px 12px; list-style-position: inside; }
+    #hero .faq summary:hover { color: var(--sage-dk); }
+    #hero .faq p { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55;
+      margin: 0; padding: 0 12px 10px 12px; }
+    .msg.err { color: var(--clay); }
+    .msg.ok { color: var(--sage-dk); }
+    .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; background:var(--blue); vertical-align: middle; }
+    .dot.ok { background:var(--sage); } .dot.warn { background:var(--gold); } .dot.err { background:var(--clay); }
+    /* Giriş formu (kullanıcı adı + parola) — panel login-card ile aynı görünüm */
+    #login { display:none; flex-direction:column; gap:12px; width:392px; max-width:94vw;
+      background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius);
+      box-shadow: 0 14px 40px var(--shadow); padding: 32px 36px 28px; }
+    #login.show { display:flex; }
+    #login input {
+      background:#fff; border:1px solid var(--line); color:var(--ink); font-size:14px;
+      padding:11px 12px; border-radius:9px; outline:none; width:100%; box-sizing:border-box;
+      font-family: inherit; transition: border-color .12s, box-shadow .12s;
+    }
+    #login input::placeholder { color: var(--ink-faint); }
+    #login input:focus { border-color:var(--sage); box-shadow:0 0 0 3px var(--sage-tint); }
+    #login button {
+      background:var(--sage); border:0; color:#fff; font-size:14px; font-weight:600;
+      padding:12px 14px; border-radius:11px; cursor:pointer; font-family: inherit;
+      box-shadow: 0 2px 7px var(--shadow); transition: background .12s, box-shadow .12s;
+    }
+    #login button:hover { background:var(--sage-dk); box-shadow:0 4px 11px var(--shadow); }
+    #login button:active { transform: translateY(1px); }
+    #login .hint { color:var(--ink-faint); font-size:12px; line-height:1.5; text-align:center; }
+
+    /* ── Ana sayfa (pano) — giriş doğrulanınca dönen ekran yerine bu görünüm açılır ── */
+    #dash { display:none; flex-direction:column; gap:16px; width:520px; max-width:94vw; }
+    #dash.show { display:flex; }
+    #dash .dash-head { display:flex; align-items:center; gap:11px; text-align:left; }
+    #dash .dash-head .mark { width:34px; height:34px; border-radius:10px; background:var(--sage);
+      color:#fff; font-weight:600; font-size:17px; display:flex; align-items:center;
+      justify-content:center; box-shadow:0 2px 6px var(--shadow); flex:none; }
+    #dash .dash-head .t { font-size:18px; font-weight:600; color:var(--ink); letter-spacing:-.01em; }
+    #dash .dash-head .s { font-size:12.5px; color:var(--ink-soft); }
+    #dash .dash-card { background:var(--card); border:1px solid var(--card-edge);
+      border-radius:var(--radius); box-shadow:0 14px 40px var(--shadow); padding:24px 26px;
+      display:flex; flex-direction:column; gap:10px; text-align:left; }
+    #dash .dash-state { font-size:15px; font-weight:600; color:var(--ink); }
+    #dash .dash-note { font-size:13px; color:var(--ink-soft); line-height:1.55; }
+    #dash .dash-actions { display:flex; gap:10px; margin-top:4px; flex-wrap:wrap; }
+    #dash .dash-actions button, #dash .dash-actions a { font-size:14px; font-weight:600;
+      padding:11px 16px; border-radius:11px; cursor:pointer; border:0; font-family:inherit;
+      text-decoration:none; background:var(--sage); color:#fff; box-shadow:0 2px 7px var(--shadow);
+      transition:background .12s, box-shadow .12s, border-color .12s, color .12s; display:inline-block; }
+    #dash .dash-actions button:hover { background:var(--sage-dk); box-shadow:0 4px 11px var(--shadow); }
+    #dash .dash-actions button:active { transform:translateY(1px); }
+    #dash .dash-actions a { background:var(--card); color:var(--ink-soft); border:1px solid var(--line); }
+    #dash .dash-actions a:hover { background:var(--sage-tint); color:var(--ink); border-color:var(--sage); }
+    #dash .dash-fine { font-size:12px; color:var(--ink-faint); }
+
+    /* ── Sağ alt hızlı menü (FAB / açılır toplar) — panel FAB ile aynı palet ──
+       bottom değeri bilerek 22px değil: UYAP sayfası içine gömülü e-imza
+       yuvarlağı (uyap_proxy.py, bottom:20px/right:20px, 46px çap) tam bu
+       köşede oturuyor; ikisi çakışmasın diye kısayol topu daha yukarıda. */
+    #fab {
+      position: fixed; right: 22px; bottom: 92px; z-index: 30;
+      width: 56px; height: 56px; display: none;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    #fab.ready { display: block; }
+    .fab-main {
+      position: absolute; right: 0; bottom: 0; width: 56px; height: 56px;
+      border: 0; border-radius: 50%; cursor: pointer; color: #fff; padding: 0;
+      background: radial-gradient(120% 120% at 30% 25%, #94b496 0%, var(--sage) 55%, var(--sage-dk) 100%);
+      box-shadow: 0 6px 18px var(--shadow), 0 2px 6px rgba(0,0,0,.12);
+      transition: transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .2s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .fab-main:hover { box-shadow: 0 9px 24px var(--shadow); }
+    .fab-main:active { transform: scale(.93); }
+    .fab-main .ico { font-size: 28px; line-height: 1; transition: transform .3s cubic-bezier(.34,1.56,.64,1); }
+    #fab.open .fab-main .ico { transform: rotate(135deg); }
+
+    .fab-item {
+      position: absolute; right: 6px; bottom: 6px; width: 44px; height: 44px;
+      border: 0; border-radius: 50%; cursor: pointer; color: #fff; padding: 0;
+      font-size: 18px; box-shadow: 0 4px 13px var(--shadow), 0 2px 5px rgba(0,0,0,.12);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transform: translateY(6px) scale(.4); pointer-events: none;
+      transition: transform .34s cubic-bezier(.34,1.56,.64,1), opacity .22s ease;
+    }
+    #fab.open .fab-item { opacity: 1; pointer-events: auto; }
+    #fab.open .fab-item.i1 { transform: translateY(-64px)  scale(1); transition-delay: .03s; }
+    #fab.open .fab-item.i2 { transform: translateY(-122px) scale(1); transition-delay: .07s; }
+    #fab.open .fab-item.i3 { transform: translateY(-180px) scale(1); transition-delay: .11s; }
+    #fab.open .fab-item.i4 { transform: translateY(-238px) scale(1); transition-delay: .15s; }
+    .fab-item.c1 { background: radial-gradient(120% 120% at 30% 25%, #94a8bd, var(--blue)); }
+    .fab-item.c2 { background: radial-gradient(120% 120% at 30% 25%, #d7bb84, var(--gold)); }
+    .fab-item.c3 { background: radial-gradient(120% 120% at 30% 25%, #d4a585, var(--clay)); }
+    .fab-item.c4 { background: radial-gradient(120% 120% at 30% 25%, #b6a4d8, #9B8AC4); }
+
+    .fab-item .lbl {
+      position: absolute; right: 54px; top: 50%; transform: translateY(-50%);
+      white-space: nowrap; background: rgba(40,36,28,.9); color: #fff;
+      font-size: 12px; padding: 5px 9px; border-radius: 7px;
+      opacity: 0; pointer-events: none; transition: opacity .15s;
+    }
+    .fab-item:hover .lbl { opacity: 1; }
+  </style>
+</head>
+<body>
+  <iframe id="app" title="UYAP" allow="clipboard-read; clipboard-write"></iframe>
+
+  <div id="overlay">
+    <!-- Tanıtım (hero): ürünü anlatır; Giriş Yap mevcut formu açar, Üye Ol kayıt sayfasına gider -->
+    <div id="hero">
+      <h1 class="logo"><span class="mark">U</span>Çoklu UYAP Giriş Programı</h1>
+      <div class="tag">E-imzalı bilgisayarınızdaki UYAP oturumunu, büronuzun her cihazından
+        <b>uçtan uca şifreli</b> bir tünelle güvenle kullanın. <b>Tek e-imza ile birden fazla
+        kullanıcı</b> — "5 aktif oturum" derdi olmadan. Kurulum yok, tarayıcı yeter.</div>
+      <ul class="feats">
+        <li><b>Tek e-imza, çok kullanıcı.</b> Büronun personeli aynı UYAP oturumunu kendi
+          kullanıcı adı ve parolasıyla paylaşır; 5 aktif oturum limiti hiç dolmaz.</li>
+        <li><b>Veri satıcıdan geçmez.</b> UYAP verisi ofis ile cihaz arasında doğrudan (P2P)
+          akar; sunucu yalnızca buluşturur.</li>
+        <li><b>Her yerden erişim.</b> Ofis, ev, adliye — internetin olduğu her yerden.</li>
+      </ul>
+      <div class="cta">
+        <button type="button" class="primary" id="hero-login">Giriş Yap</button>
+        <button type="button" class="ghost" id="hero-signup">Üye Ol</button>
+        <button type="button" class="ghost" id="hero-download">Programı İndir</button>
+      </div>
+      <div class="fine">Giriş için büronuzdan aldığınız kullanıcı adı (kullanıcıadı@ofisadı) ve parola gerekir.<br>
+        "Programı İndir" yalnızca e-imzalı <b>ofis bilgisayarı</b> içindir; personel tarayıcıyla girer.<br>
+        Kullanıcı yönetimi: <a href="/ofis" style="color:var(--sage-dk)">ofis paneli</a></div>
+
+      <!-- SSS — arama motorlarının gördüğü içerik; head'deki FAQPage JSON-LD ile birebir aynı -->
+      <section class="faq" aria-label="Sıkça sorulan sorular">
+        <h2>Sıkça Sorulan Sorular</h2>
+        <details>
+          <summary>UYAP "aktif 5 oturum" hatası nedir, nasıl çözülür?</summary>
+          <p>UYAP, bir e-imza ile aynı anda en fazla 5 aktif oturuma izin verir; limit dolunca
+          "aktif 5 oturum bulunmaktadır" hatası alırsınız. Çoklu UYAP'ta büro tek bir UYAP
+          oturumunu paylaşır: her personel kendi kullanıcı adıyla bağlanır ama UYAP tarafında
+          tek oturum açık kalır, bu yüzden limit hiç dolmaz.</p>
+        </details>
+        <details>
+          <summary>"Eş zamanlı olarak birden fazla sorgulama yapamazsınız" uyarısı neden çıkar?</summary>
+          <p>Aynı e-imza ile aynı anda birden fazla sorgu gönderildiğinde UYAP bu uyarıyı verir.
+          Çoklu UYAP tüm istekleri tek çıkış noktasından adil sırayla geçirdiği için eş zamanlı
+          sorgu çakışması oluşmaz.</p>
+        </details>
+        <details>
+          <summary>9. madde e-imza kilitlenmesi (3 saatlik blok) nedir?</summary>
+          <p>Farklı IP adreslerinden aynı anda birden çok e-imza girişi tespit edildiğinde
+          Avukat Portal erişimi 3 saatliğine bloke edilir. Çoklu UYAP tek e-imza ve tek çıkış
+          noktası kullandığından bu durum yapısal olarak oluşmaz.</p>
+        </details>
+        <details>
+          <summary>Kurulum gerekir mi, hangi cihazlardan girilir?</summary>
+          <p>Personel tarafında kurulum gerekmez; güncel bir tarayıcı yeterlidir. Yalnızca
+          e-imzalı bilgisayarda küçük bir ofis ajanı çalışır. Ofis, ev veya adliyeden —
+          internetin olduğu her yerden erişilir.</p>
+        </details>
+        <details>
+          <summary>UYAP verilerim sizin sunucunuzdan mı geçiyor?</summary>
+          <p>Hayır. UYAP verisi, e-imzalı bilgisayar ile personelin cihazı arasında uçtan uca
+          şifreli doğrudan (P2P) bağlantıyla akar; sunucumuz yalnızca iki tarafı buluşturur.</p>
+        </details>
+      </section>
+    </div>
+
+    <div class="ring" id="ring" style="display:none"></div>
+    <div class="title" id="conn-title" style="display:none">Çoklu UYAP</div>
+    <div class="msg" id="status" style="display:none"><span class="dot warn"></span>Başlatılıyor…</div>
+
+    <form id="login" autocomplete="on">
+      <input id="login-user" name="username" type="text" placeholder="kullanıcıadı@ofisadı" autocapitalize="none" autocorrect="off" required />
+      <input id="login-pass" name="password" type="password" placeholder="Parola" required />
+      <button id="login-btn" type="submit">Bağlan</button>
+      <div class="hint" id="login-hint">Büronuzdan aldığınız kimlikle girin — ör. <b>ahmet@kemal-hukuk</b>.</div>
+    </form>
+
+    <!-- Ana sayfa (pano): giriş doğrulanınca dönen ekran YERİNE bu görünüm açılır.
+         Bağlantı kartı HER kullanıcıya açıktır (master'a özel değildir). -->
+    <div id="dash">
+      <div class="dash-head">
+        <span class="mark">U</span>
+        <div>
+          <div class="t">Çoklu UYAP — Ana Sayfa</div>
+          <div class="s" id="dash-office"></div>
+        </div>
+      </div>
+      <div class="dash-card" id="dash-conn">
+        <div class="dash-state"><span class="dot warn" id="dash-dot"></span><span id="dash-msg">Durum denetleniyor…</span></div>
+        <div class="dash-note" id="dash-note"></div>
+        <div class="dash-actions">
+          <button id="dash-primary" type="button" style="display:none"></button>
+          <a id="dash-panel" href="#" style="display:none">Panel'i Aç</a>
+          <a id="dash-download" href="/indir" style="display:none">Programı İndir</a>
+        </div>
+        <div class="dash-fine" id="dash-fine"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sağ alt hızlı menü: ana topa tıkla → 4 renkli kısayol topu açılır -->
+  <div id="fab" aria-label="Hızlı menü">
+    <button class="fab-item i1 c1" type="button" data-act="1" title="Ana Sayfa">
+      <span class="ico">⌂</span><span class="lbl">Ana Sayfa</span>
+    </button>
+    <button class="fab-item i2 c2" type="button" data-act="2" title="Kısayol 2">
+      <span class="ico">②</span><span class="lbl">Kısayol 2</span>
+    </button>
+    <button class="fab-item i3 c3" type="button" data-act="3" title="Kısayol 3">
+      <span class="ico">③</span><span class="lbl">Kısayol 3</span>
+    </button>
+    <button class="fab-item i4 c4" type="button" data-act="4" title="Kısayol 4">
+      <span class="ico">④</span><span class="lbl">Kısayol 4</span>
+    </button>
+    <button class="fab-main" id="fab-main" type="button" aria-expanded="false" aria-label="Menü">
+      <span class="ico">＋</span>
+    </button>
+  </div>
+
+  <script>
+    // Sağ alt hızlı menü (FAB). Kısayol aksiyonları şimdilik yer tutucudur;
+    // her topun yapacağı işi aşağıdaki "fabActions" içine yazın.
+    (function () {
+      var fab = document.getElementById("fab");
+      var mainBtn = document.getElementById("fab-main");
+      if (!fab || !mainBtn) return;
+
+      // ── Kısayol aksiyonları (1..4) — buraya kendi işlevlerinizi koyun ──
+      var fabActions = {
+        "1": function () { if (window.__uyapShowDashboard) window.__uyapShowDashboard(); },
+        "2": function () { console.log("[kısayol 2] tıklandı"); },
+        "3": function () { console.log("[kısayol 3] tıklandı"); },
+        "4": function () { console.log("[kısayol 4] tıklandı"); }
+      };
+
+      function closeFab() {
+        fab.classList.remove("open");
+        mainBtn.setAttribute("aria-expanded", "false");
+      }
+
+      mainBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var open = fab.classList.toggle("open");
+        mainBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+
+      Array.prototype.forEach.call(fab.querySelectorAll(".fab-item"), function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var act = btn.getAttribute("data-act");
+          if (fabActions[act]) { try { fabActions[act](); } catch (err) { console.error(err); } }
+          closeFab();
+        });
+      });
+
+      // Dışarı tıklayınca / ESC ile kapan
+      document.addEventListener("click", function (e) {
+        if (!fab.contains(e.target)) closeFab();
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeFab();
+      });
+
+      // Menü, bağlantı kurulup UYAP açıldığında görünür olur.
+      window.__uyapShowFab = function () { fab.classList.add("ready"); };
+    })();
+  </script>
+
+  <script>
+    // tunnel.js'in çağırdığı durum/başlat kancaları + giriş sonrası ANA SAYFA (pano).
+    // Akış: hero → giriş formu → kimlik doğrulanınca ("joined") dönen ekran YERİNE pano.
+    // Panodaki bağlantı kartı HER kullanıcıya açıktır (master'a özel değildir).
+    (function () {
+      var statusEl = document.getElementById("status");
+      var overlay = document.getElementById("overlay");
+      var ring = document.getElementById("ring");
+      var iframe = document.getElementById("app");
+      var loginForm = document.getElementById("login");
+      var userInput = document.getElementById("login-user");
+      var loginHint = document.getElementById("login-hint");
+      var passInput = document.getElementById("login-pass");
+      var hero = document.getElementById("hero");
+      var heroLoginBtn = document.getElementById("hero-login");
+      var heroSignupBtn = document.getElementById("hero-signup");
+      var connTitle = document.getElementById("conn-title");
+      var dash = document.getElementById("dash");
+      var dashOffice = document.getElementById("dash-office");
+      var dashDot = document.getElementById("dash-dot");
+      var dashMsg = document.getElementById("dash-msg");
+      var dashNote = document.getElementById("dash-note");
+      var dashPrimary = document.getElementById("dash-primary");
+      var dashPanel = document.getElementById("dash-panel");
+      var dashDownload = document.getElementById("dash-download");
+      var dashFine = document.getElementById("dash-fine");
+      var iframeView = null;        // null | "uyap" | "panel" — iframe'de şu an hangisi yüklü
+      var heroDismissed = false;   // kullanıcı "Giriş Yap"a bastı mı?
+      var loginReady = false;      // tünel giriş bilgisi istedi mi?
+
+      // ── Pano durumu ──
+      var authed = null;           // "joined" bilgisi (role/office_label/agent_seen)
+      var officeOnline = false;    // ofis sunucusu buluşturmada çevrimiçi mi
+      var agentSeen = null;        // sunucunun en son görüldüğü an (epoch sn; hiç yoksa null)
+      var tunnelReady = false;     // WebRTC kanalı açık mı
+      var localAgent = null;       // bu bilgisayarda ofis programı çalışıyor mu (null=bilinmiyor)
+      var localProbed = false;     // yerel yoklama başlatıldı mı
+      var waitTimer = null;        // otomatik bağlantı denetimi döngüsü
+      var waitDeadline = 0;
+      var waitFailed = false;      // bekleme süresi doldu, sunucuya ulaşılamadı
+
+      // Açılışta tanıtım (hero) görünür; tünel arka planda bağlanmayı dener ama giriş formu
+      // yalnızca kullanıcı "Giriş Yap"a bastıktan sonra gösterilir (tünel mantığı DEĞİŞMEZ).
+      hero.classList.add("show");
+
+      // "Giriş Yap": hero'yu kapat, bağlantı görünümüne geç; tünel giriş bilgisi hazırsa formu aç.
+      function enterLogin() {
+        if (heroDismissed) return;
+        heroDismissed = true;
+        hero.classList.remove("show");
+        connTitle.style.display = "";
+        if (loginReady) {
+          showLogin();
+        } else {
+          ring.style.display = "";
+          statusEl.style.display = "";
+          window.__uyapStatus("Bağlanılıyor…", "warn");
+        }
+      }
+      heroLoginBtn.addEventListener("click", enterLogin);
+      // "Üye Ol": üst düzey gezinme ile kayıt sayfasına git (aynı origin).
+      heroSignupBtn.addEventListener("click", function () { window.location.href = "/uye-ol"; });
+      // "Programı İndir": ofis (e-imzalı) bilgisayar için tek-exe kurulum sayfası.
+      var heroDownloadBtn = document.getElementById("hero-download");
+      if (heroDownloadBtn) {
+        heroDownloadBtn.addEventListener("click", function () { window.location.href = "/indir"; });
+      }
+
+      window.__uyapStatus = function (text, level) {
+        var cls = level === "ok" ? "ok" : level === "err" ? "err" : level === "warn" ? "warn" : "";
+        statusEl.innerHTML = '<span class="dot ' + cls + '"></span>' + escapeHtml(text);
+        statusEl.className = "msg" + (level === "err" ? " err" : level === "ok" ? " ok" : "");
+        if (level === "err") ring.style.display = "none";
+      };
+
+      function showLogin() {
+        ring.style.display = "none";
+        statusEl.style.display = "none";
+        dash.classList.remove("show");
+        loginForm.classList.add("show");
+        setTimeout(function () { userInput.focus(); }, 50);
+      }
+
+      // Submit yalnızca BİR KEZ bağlanır (yeniden gösterimlerde tekrar eklenmez).
+      loginForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var u = userInput.value.trim();
+        var p = passInput.value;
+        if (!u || !p) return;
+        if (u.indexOf("@") === -1) {
+          // Tam kimlik şart: '@' yoksa sunucu hesabı hangi ofise bağlayacağını bilemez.
+          loginHint.innerHTML = 'Kullanıcı adınızı <b>kullanıcıadı@ofisadı</b> biçiminde girin — ör. <b>ahmet@kemal-hukuk</b>.';
+          loginHint.style.color = "#b3452f";
+          userInput.focus();
+          return;
+        }
+        loginHint.style.color = "";
+        loginForm.classList.remove("show");
+        statusEl.style.display = "";
+        ring.style.display = "";
+        window.__uyapStatus("Bağlanılıyor…", "warn");
+        if (typeof window.__uyapStart === "function") window.__uyapStart(u, p, "");
+      });
+
+      // tunnel.js giriş bilgisi gerektiğinde çağırır. Hero hâlâ görünüyorsa formu HEMEN açma —
+      // kullanıcı "Giriş Yap"a basınca (enterLogin) açılır. Aksi halde doğrudan formu göster.
+      window.__uyapNeedLogin = function () {
+        loginReady = true;
+        if (heroDismissed) showLogin();
+      };
+      window.__uyapRelogin = function (errText) {
+        loginReady = true;
+        heroDismissed = true;         // hatalı giriş sonrası her zaman formu göster
+        hero.classList.remove("show");
+        connTitle.style.display = "";
+        authed = null;                // pano durumu sıfırlanır (yeni kimlikle dolacak)
+        officeOnline = false; tunnelReady = false;
+        stopWait(false);
+        showLogin();
+        // showLogin statusEl'i gizler → hata GÖRÜNÜR kalsın diye form ipucuna yazılır.
+        if (errText) {
+          loginHint.textContent = errText;
+          loginHint.style.color = "#b3452f";
+        }
+      };
+
+      // ── Ana sayfa (pano) ──────────────────────────────────────────────────────────
+      function showDashboard() {
+        heroDismissed = true;
+        hero.classList.remove("show");
+        loginForm.classList.remove("show");
+        ring.style.display = "none";
+        statusEl.style.display = "none";
+        connTitle.style.display = "none";
+        overlay.classList.remove("hidden");
+        dash.classList.add("show");
+        render();
+      }
+      // FAB "Ana Sayfa" kısayolu: UYAP görünümünden panoya dön (iframe yüklü kalır).
+      window.__uyapShowDashboard = function () { if (authed) showDashboard(); };
+
+      function fmtSeen(ts) {
+        try { return new Date(ts * 1000).toLocaleString("tr-TR"); } catch (_) { return ""; }
+      }
+
+      function stopWait(failed) {
+        if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+        waitFailed = !!failed;
+      }
+
+      // Otomatik bağlantı denetimi: sunucuya buradan komut gönderilemez (çevrimdışıysa
+      // ulaşacak kanal yok); ajan zaten açılışta/kopunca kendiliğinden yeniden bağlanır.
+      // Bu yüzden 30 sn boyunca taze durum sorgulanır; ofis belirirse tünel kendiliğinden
+      // kurulur, belirmezse TEK net sonuç ekranı gösterilir (labirent yok).
+      function startConnectWait() {
+        waitFailed = false;
+        waitDeadline = Date.now() + 30000;
+        if (waitTimer) clearInterval(waitTimer);
+        waitTimer = setInterval(function () {
+          if (officeOnline) { stopWait(false); render(); return; }
+          if (Date.now() > waitDeadline) { stopWait(true); render(); return; }
+          if (typeof window.__uyapQueryStatus === "function") window.__uyapQueryStatus();
+          render();  // geri sayım yazısı tazelensin
+        }, 2500);
+        if (typeof window.__uyapQueryStatus === "function") window.__uyapQueryStatus();
+        render();
+      }
+
+      // Bu bilgisayarda ofis programı çalışıyor mu? (127.0.0.1:8800 CORS'lu ping ucu.)
+      // Eski sürüm program bu ucu bilmez → "yok" görünür; indirme sayfası bunu da karşılar.
+      function probeLocalAgent() {
+        if (localProbed) return;
+        localProbed = true;
+        var done = function (ok) { localAgent = !!ok; render(); };
+        try {
+          var opts = { mode: "cors", cache: "no-store" };
+          if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) {
+            opts.signal = AbortSignal.timeout(3000);
+          }
+          fetch("http://127.0.0.1:8800/__agent__/ping", opts)
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (j) { done(j && j.app === "cokluuyap-ofis"); })
+            .catch(function () { done(false); });
+        } catch (_) { done(false); }
+      }
+
+      function openApp() {
+        if (iframeView !== "uyap") { iframeView = "uyap"; iframe.src = "/giris"; }
+        iframe.style.display = "block";
+        overlay.classList.add("hidden");
+        if (typeof window.__uyapShowFab === "function") window.__uyapShowFab();
+      }
+
+      // Ofis bilgisayarındaki yerel Django panelini (uyap_panel/web, uyap_app.py paylaşım
+      // açıkken 127.0.0.1:8000'de başlatır) AYNI tünelden açar — bkz uyap_core/uyap_proxy.py
+      // PANEL_PREFIX. Sondaki "/" bilerek var: Django'nun göreli statik/şablon bağlantıları
+      // geçerli sayfa yoluna göre çözülür (bkz settings.py FORCE_SCRIPT_NAME notu).
+      function openPanel() {
+        if (iframeView !== "panel") { iframeView = "panel"; iframe.src = "/__panel__/"; }
+        iframe.style.display = "block";
+        overlay.classList.add("hidden");
+        if (typeof window.__uyapShowFab === "function") window.__uyapShowFab();
+      }
+
+      function setDot(cls) { dashDot.className = "dot " + cls; }
+
+      // Bağlantı kartının durum makinesi: tünel hazır → aç; ofis çevrimiçi → kuruluyor;
+      // bekleme → geri sayım; çevrimdışı → "bağlantı kur" ve tanı (indir / server'ı bağlat).
+      function render() {
+        if (!dash.classList.contains("show")) return;
+        dashOffice.textContent = authed && authed.office_label
+          ? authed.office_label + (authed.office_code ? " · " + authed.office_code : "")
+          : (authed && authed.office_code ? authed.office_code : "");
+        dashPrimary.style.display = "none";
+        dashPanel.style.display = "none";
+        dashDownload.style.display = "none";
+        dashNote.textContent = "";
+        dashFine.textContent = "";
+        dashPrimary.onclick = null;
+        dashPanel.onclick = null;
+
+        if (tunnelReady) {
+          setDot("ok");
+          dashMsg.textContent = "Paylaşılan bağlantı aktif.";
+          dashNote.textContent = "Güvenli tünel kuruldu; UYAP kullanıma hazır.";
+          dashPrimary.textContent = "UYAP'ı Aç";
+          dashPrimary.style.display = "";
+          // İleride bu menüden otomasyon modülleri (takip açılış, sorgular) çalışacak —
+          // bkz uyap_panel/web/panel/templates/panel/dashboard.html.
+          dashPanel.textContent = "Panel'i Aç";
+          dashPanel.style.display = "";
+          dashPanel.onclick = function (e) { e.preventDefault(); openPanel(); };
+          dashPrimary.onclick = openApp;
+          return;
+        }
+        if (officeOnline) {
+          setDot("warn");
+          dashMsg.textContent = "Ofis sunucusu çevrimiçi — güvenli bağlantı kuruluyor…";
+          dashNote.textContent = "Birkaç saniye içinde hazır olur.";
+          return;
+        }
+        if (waitTimer) {
+          setDot("warn");
+          var left = Math.max(0, Math.ceil((waitDeadline - Date.now()) / 1000));
+          dashMsg.textContent = "Ofis bağlantısı aranıyor… (" + left + " sn)";
+          dashNote.textContent = "Genellikle birkaç saniye sürer; hiçbir şeye basmanız gerekmez.";
+          return;
+        }
+        if (waitFailed) {
+          // Denetim kendi kendine yapıldı ve sonuç TEK ekranda: ya sunucu hiç kurulmamış
+          // (kurulum yoluna işaret) ya da kurulu sunucuya şu an ulaşılamıyor (bekle/yenile).
+          setDot("err");
+          if (agentSeen == null) {
+            if (localAgent === true) {
+              dashMsg.textContent = "Bu bilgisayarda ofis programı çalışıyor.";
+              dashNote.textContent = "Paylaşım sunucuya henüz ulaşmadı. Programdaki girişin " +
+                "tamamlandığından emin olun; ardından burası kendiliğinden bağlanır.";
+            } else {
+              dashMsg.textContent = "Bu ofiste kurulu bir sunucu yok.";
+              dashNote.textContent = "Tek adım kaldı: programı ofis (e-imzalı) bilgisayarına " +
+                "indirip bir kez giriş yapın — paylaşım ve sonraki açılışlar tamamen otomatiktir. " +
+                "Kurulum bitince bu sayfa kendiliğinden bağlanır.";
+              dashDownload.style.display = "";
+            }
+          } else {
+            dashMsg.textContent = "Ofis bilgisayarına şu an ulaşılamıyor.";
+            dashNote.textContent = "Bilgisayar kapalı ya da internetsiz olabilir. Açıldığı anda " +
+              "paylaşım kendiliğinden kurulur ve bu sayfa bağlanır — beklemeniz yeterli.";
+            dashFine.textContent = "Sunucu en son " + fmtSeen(agentSeen) + " tarihinde görüldü.";
+          }
+          dashPrimary.textContent = "Tekrar Dene";
+          dashPrimary.style.display = "";
+          dashPrimary.onclick = startConnectWait;
+          return;
+        }
+        // İlk çizim: otomatik denetim başlamak üzere (pano açılır açılmaz kendisi arar).
+        setDot("warn");
+        dashMsg.textContent = "Durum denetleniyor…";
+        dashNote.textContent = "";
+      }
+
+      // ── tunnel.js kancaları (pano sürümleri) ─────────────────────────────────────
+      // Kimlik doğrulandı ("joined"): panoyu aç. UYAP görünümündeyken gelen yeniden
+      // bağlanma "joined"leri panoyu ZORLA açmaz, yalnızca durumu tazeler.
+      window.__uyapAuthed = function (msg) {
+        authed = msg || {};
+        officeOnline = !!(msg && msg.peer_present);
+        if (msg && msg.agent_seen != null) agentSeen = msg.agent_seen;
+        probeLocalAgent();
+        if (overlay.classList.contains("hidden")) { render(); return; }
+        showDashboard();
+        // Labirent yok: ofis çevrimiçi değilse denetim KENDİLİĞİNDEN başlar; kullanıcı
+        // ya "UYAP'ı Aç" butonunu ya da tek net sonuç ekranını görür.
+        if (!officeOnline && !tunnelReady) startConnectWait();
+      };
+      window.__uyapOfficeState = function (online) {
+        officeOnline = !!online;
+        if (online) { stopWait(false); }
+        else tunnelReady = false;
+        render();
+      };
+      window.__uyapStatusReply = function (msg) {
+        officeOnline = !!(msg && msg.office_online);
+        if (msg && msg.agent_seen != null) agentSeen = msg.agent_seen;
+        render();
+      };
+      // Tünel açıldı: UYAP'ı KENDİLİĞİNDEN açma — pano "aktif" durumuna geçer, kullanıcı
+      // "UYAP'ı Aç" ile girer. (Kullanıcı zaten UYAP görünümündeyse hiçbir şey değişmez.)
+      window.__uyapTunnelOpen = function () {
+        tunnelReady = true;
+        officeOnline = true;
+        stopWait(false);
+        render();
+      };
+      window.__uyapTunnelClosed = function () {
+        tunnelReady = false;
+        render();
+      };
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"]/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+        });
+      }
+    })();
+  </script>
+
+  <!-- Yapılandırma (vendor_server.py dinamik üretir) + tünel mantığı -->
+  <script src="/__app__/config.js"></script>
+  <script type="module" src="/__app__/tunnel.js"></script>
+</body>
+</html>

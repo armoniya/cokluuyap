@@ -1,0 +1,73 @@
+{# SGK toplu sorgu paneli #}
+<div class="panel" data-tab="sgk">
+  <h2 class="page-title">SGK Sorgu <span class="page-sub">· Toplu SGK sorgulama</span></h2>
+
+  <p class="hint" style="margin:0 0 14px">
+    Excel yükleyin (<b>A</b>: No · <b>B</b>: Ad Soyad · <b>C</b>: Birim · <b>D</b>: Dosya Yıl/No).
+    Sonuçlar sunucuda işlenir; bittiğinde <b>tam</b> ve <b>özet</b> Excel'i indirebilirsiniz.
+    Ofis bağlantısı (Paylaş/Al) açık olmalı.
+  </p>
+
+  <!-- Araç çubuğu -->
+  <div class="sgk-bar">
+    <label class="btn ok sm" style="margin:0">
+      📂 Excel Yükle
+      <input type="file" id="sgk-file" accept=".xlsx,.xlsm" hidden>
+    </label>
+    <button class="btn ok sm" id="sgk-start" disabled>▶ Sorgula</button>
+    <button class="btn ghost sm" id="sgk-retry" disabled>↻ Hatalıları Tekrar Dene</button>
+    <button class="btn ghost sm" id="sgk-pause" disabled>⏸ Duraklat</button>
+    <button class="btn danger sm" id="sgk-stop" disabled>⏹ Durdur</button>
+    <span class="file-name" id="sgk-file-name">Dosya seçilmedi</span>
+    <span class="statusline" id="sgk-status" style="margin-left:auto"></span>
+  </div>
+
+  <!-- Sorgulanacak sütunlar -->
+  <div class="step" style="margin-top:12px">
+    <h4><span class="step-no">1</span>Sorgulanacak sütunlar</h4>
+    <div class="radios" id="sgk-cols">
+      {% for s in sgk_sorgular %}
+      <label><input type="checkbox" class="sgk-col" value="{{ s.anahtar }}" checked> {{ s.baslik }}</label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Filtre -->
+  <div class="sgk-bar" style="margin-top:6px">
+    <label style="margin:0">Filtre</label>
+    <select id="sgk-filter-col" style="width:160px">
+      <option value="">Tüm Sütunlar</option>
+      {% for k in sgk_kolonlar %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+    </select>
+    <input type="text" id="sgk-filter-txt" placeholder="İçerir…" style="width:200px">
+    <label class="check" style="margin:0"><input type="checkbox" id="sgk-only-olumlu"> Sadece SGK olumlu</label>
+    <span class="pill" id="sgk-filter-info" style="margin-left:auto"></span>
+  </div>
+
+  <!-- Sonuç indirme -->
+  <div class="section-head">
+    <span class="pill" id="sgk-progress"></span>
+    <div>
+      <a class="btn link" id="sgk-dl-tam" href="/api/sgk/download?which=tam" target="_blank" style="display:none">⬇ Tam Excel</a>
+      <a class="btn link" id="sgk-dl-ozet" href="/api/sgk/download?which=ozet" target="_blank" style="display:none">⬇ Özet Excel</a>
+    </div>
+  </div>
+
+  <!-- Tablo + detay -->
+  <div class="sgk-split">
+    <div class="sgk-table-wrap">
+      <table class="sgk-table" id="sgk-table">
+        <thead>
+          <tr>{% for k in sgk_kolonlar %}<th>{{ k }}</th>{% endfor %}</tr>
+        </thead>
+        <tbody id="sgk-tbody"></tbody>
+      </table>
+    </div>
+    <div class="sgk-detail">
+      <div class="sgk-detail-head">Hücre Detayı (tıklayın)</div>
+      <pre id="sgk-detail-body"></pre>
+    </div>
+  </div>
+
+  <div class="logbox" id="sgk-log" style="height:150px;margin-top:10px"></div>
+</div>

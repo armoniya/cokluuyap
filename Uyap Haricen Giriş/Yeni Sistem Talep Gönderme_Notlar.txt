@@ -1,0 +1,3 @@
+Talep ekle dediği an talep evrakı oluştur butonuna tıklasın,
+evrak türü seçtiği anda genel talebi, seçsin
+Dosya seç kısmında butona tıkladığında otomatik evrak ekle butonuna tıklasın.

@@ -1,0 +1,59 @@
+{# Ortak takip-açılış bölümü. Parametreler: kind (icra|mts), title, subtitle #}
+<div class="panel" data-tab="{{ kind }}">
+  <h2 class="page-title">{{ title }}{% if subtitle %} <span class="page-sub">· {{ subtitle }}</span>{% endif %}</h2>
+  <div class="step">
+    <h4><span class="step-no">1</span>Kaynak (XML / Excel)</h4>
+    <div class="row">
+      <input type="file" accept=".xml,.xlsx" data-role="source" data-kind="{{ kind }}">
+      <span class="file-name" data-role="source-info">Seçilmedi</span>
+    </div>
+  </div>
+
+  <div class="step">
+    <h4><span class="step-no">2</span>Ayarlar</h4>
+    <div class="row">
+      <div style="width:160px">
+        <label>İl</label>
+        <input type="text" data-role="il" value="{{ il }}">
+      </div>
+      <div style="width:160px">
+        <label>Adliye</label>
+        <input type="text" data-role="adliye" value="{{ adliye }}">
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <label>Onay modu</label>
+      <div class="radios">
+        <label><input type="radio" name="onay-{{ kind }}" value="yok" {% if onay_modu == 'yok' %}checked{% endif %}> Onaysız (hepsini aç)</label>
+        <label><input type="radio" name="onay-{{ kind }}" value="tek_tek" {% if onay_modu == 'tek_tek' %}checked{% endif %}> Her takipte onayla</label>
+        <label><input type="radio" name="onay-{{ kind }}" value="toplu" {% if onay_modu == 'toplu' %}checked{% endif %}> Toplu önizle, tek onay</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <h4><span class="step-no">3</span>Belgeler <span class="pill">(opsiyonel; tümüne uygulanır)</span></h4>
+    <div class="row">
+      <div>
+        <label>Vekalet PDF</label>
+        <input type="file" accept=".pdf" data-role="vekalet" data-kind="{{ kind }}">
+        <span class="file-name" data-role="vekalet-info">—</span>
+      </div>
+      <div>
+        <label>Dayanak PDF</label>
+        <input type="file" accept=".pdf" data-role="dayanak" data-kind="{{ kind }}">
+        <span class="file-name" data-role="dayanak-info">—</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="row" style="justify-content:space-between;align-items:center">
+    <div>
+      <button class="btn ok" data-role="start" data-kind="{{ kind }}">İşi Başlat</button>
+      <button class="btn danger" data-role="cancel" data-kind="{{ kind }}" disabled>İptal</button>
+    </div>
+    <span class="statusline" data-role="status"></span>
+  </div>
+  <div class="progress"><i data-role="bar"></i></div>
+  <div class="logbox" data-role="log"></div>
+</div>

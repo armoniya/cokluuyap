@@ -1,0 +1,83 @@
+{% extends "panel/base.html" %}
+{% block title %}Giriş · UYAP Ağ Geçidi{% endblock %}
+{% block body %}
+<div class="login-wrap">
+  <form class="login-card" method="post" action="{% url 'panel:login' %}">
+    {% csrf_token %}
+    <h1 class="brand">UYAP Ağ Geçidi</h1>
+    <p class="brand-sub">Bulut hesabınızla giriş yapın</p>
+
+    <div class="field">
+      <label for="office_code">Ofis Kodu</label>
+      <input type="text" id="office_code" name="office_code" value="{{ office_code }}" autofocus autocomplete="organization">
+    </div>
+    <div class="field">
+      <label for="username">Kullanıcı Adı</label>
+      <input type="text" id="username" name="username" value="{{ username }}" autocomplete="username">
+    </div>
+    <div class="field">
+      <label for="password">Parola</label>
+      <input type="password" id="password" name="password" autocomplete="current-password">
+    </div>
+    <label class="check">
+      <input type="checkbox" name="remember" {% if remember %}checked{% endif %}> Bilgileri hatırla
+    </label>
+
+    <button class="btn block" type="submit">Giriş Yap</button>
+    {% if error %}<div class="msg err">{{ error }}</div>{% else %}<div class="msg"></div>{% endif %}
+
+    <button type="button" class="btn link" id="forgot-link">Parolamı unuttum</button>
+  </form>
+
+  <div class="login-card" id="reset-card" style="display:none;margin-top:14px">
+    <h1 class="brand" style="font-size:18px">Parola Sıfırlama</h1>
+    <p class="brand-sub">Ofis kodu + kullanıcı adınızı, ya da yalnızca e-postanızı girin. Sıfırlama
+      bağlantısı ofis ayarına göre size ya da büronuzun master kullanıcısına gönderilir.</p>
+    <div class="field">
+      <label for="reset-office">Ofis Kodu <span style="opacity:.6">(e-posta giriyorsanız boş bırakın)</span></label>
+      <input type="text" id="reset-office" value="{{ office_code }}" autocomplete="organization">
+    </div>
+    <div class="field">
+      <label for="reset-ident">Kullanıcı Adı / E-posta</label>
+      <input type="text" id="reset-ident" value="{{ username }}" autocomplete="username">
+    </div>
+    <button type="button" class="btn block" id="reset-send">Sıfırlama Bağlantısı Gönder</button>
+    <div class="msg" id="reset-msg"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function getCookie(name){
+  const m = document.cookie.match("(^|;)\\s*" + name + "\\s*=\\s*([^;]+)");
+  return m ? m.pop() : "";
+}
+const card = document.getElementById("reset-card");
+document.getElementById("forgot-link").addEventListener("click", function(){
+  card.style.display = card.style.display === "none" ? "" : "none";
+  if (card.style.display === "") document.getElementById("reset-ident").focus();
+});
+document.getElementById("reset-send").addEventListener("click", async function(){
+  const ident = document.getElementById("reset-ident").value.trim();
+  const office = document.getElementById("reset-office").value.trim();
+  const msg = document.getElementById("reset-msg");
+  if (!ident){ msg.className = "msg err"; msg.textContent = "Kullanıcı adı veya e-posta girin."; return; }
+  msg.className = "msg info"; msg.textContent = "Gönderiliyor…";
+  try {
+    const r = await fetch("{% url 'panel:api_reset' %}", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken")},
+      body: JSON.stringify({identifier: ident, office_code: office})
+    });
+    const d = await r.json();
+    if (!r.ok){ msg.className = "msg err"; msg.textContent = d.error || "Hata."; return; }
+    const extra = d.test_mode ? " (TEST modu)" : "";
+    msg.className = "msg ok";
+    msg.textContent = "Sıfırlama bağlantısı " + (d.sent_to || "") + " adresine gönderildi." + extra;
+  } catch (e) {
+    msg.className = "msg err"; msg.textContent = "Sunucuya ulaşılamadı.";
+  }
+});
+</script>
+{% endblock %}

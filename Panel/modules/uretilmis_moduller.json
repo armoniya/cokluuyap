@@ -1,0 +1,26 @@
+[
+  {
+    "key": "htiyati_Haciz",
+    "label": "İhtiyati Haciz",
+    "core": "htiyati_Haciz",
+    "grup": "Üretilen Modüller",
+    "endpoint": "(oturum akışı)",
+    "adim_sayisi": 24
+  },
+  {
+    "key": "Mts_evirme",
+    "label": "Mts çevirme",
+    "core": "Mts_evirme",
+    "grup": "Üretilen Modüller",
+    "endpoint": "(oturum akışı)",
+    "adim_sayisi": 18
+  },
+  {
+    "key": "Vekalet_Sunma",
+    "label": "Vekalet Sunma",
+    "core": "Vekalet_Sunma",
+    "grup": "Üretilen Modüller",
+    "endpoint": "(oturum akışı)",
+    "adim_sayisi": 12
+  }
+]
