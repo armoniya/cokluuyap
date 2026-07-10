@@ -294,3 +294,30 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
    taraf/tereke uç noktaları, o yargı türleri fiilen kullanılmaya
    başlandığında (ya da ayrı bir doğrulama oturumunda) kendi `*Detay`
    modelleriyle eklenecek — şimdiden alan uydurulmayacak.
+
+## 7. İlerleme
+
+- **Faz 1 (şema) — TAMAMLANDI** (commit `ff14cdc`): `Birim.yargi_turu`,
+  `YargiBirimi`, `SenkronKapsami`, genişletilmiş `Dosya.Durum`/`Tur` choices,
+  `IcraTakipDetay`, `HukukDavaDetay`. `manage.py check` temiz.
+- **Faz 2 (sorgu motoru) — TAMAMLANDI** (commit `b9d87b1`): yeni
+  `Panel/modules/dosya_core.py` — `yargi_birimleri_getir`/`_bootstrap`
+  (`yargiBirimleriSorgula_brd.ajx` → `YargiBirimi` upsert), genellenmiş
+  `birim_listesi_getir_genel`/`build_payload_genel` (§1.3/§1.4'teki
+  `birimTuru2`/`birimTuru3` artık parametre), `SenkronKapsami`'ye göre
+  çoklu-kapsam döngüsü kuran `DosyaSorgu.calistir`. Ortak aktarım/ayrıştırma
+  mantığı (`SorguMotoru`, `parse_records`, `taraf_variantlari`,
+  `kolon_degeri`, `save_taraf`, ...) `icra_core.py`'den İTHAL EDİLDİ,
+  kopyalanmadı — mimari karar (§4) gereği `icra_core.py`'ye HİÇ dokunulmadı
+  (yalnız okundu). `ingest.py`'deki `dosya_kunyesi_kaydet` artık opsiyonel
+  `yargi_turu` parametresi alıyor (None ise eski davranış aynen korunur).
+  **Sınırlama:** bu makinede PostgreSQL ikilikleri kurulu değil; doğrulama
+  yalnızca `manage.py check` + kod incelemesiyle yapıldı, `YargiBirimi` upsert
+  ve `DosyaSorgu.calistir` akışı CANLI DB'ye karşı henüz TEST EDİLMEDİ.
+- **Kalan (henüz yapılmadı):** `SenkronKapsami` seçim arayüzü (Panel/web —
+  kullanıcının yargı türü/birimi kombinasyonlarını işaretlediği ekran),
+  dosya listesi filtre UI'ı (yargı türü/birimi/dosya türü/durumu/açılış
+  tarihi aralığı), "Dosya Görüntüle" tıklanınca `dosyaAyrintiBilgileri_brd.ajx`
+  çağrılıp `IcraTakipDetay`/`HukukDavaDetay`'a yazılması, taraf (Taraf
+  Bilgileri sekmesi) çekimi için Hukuk'un `dosya_borclu_list.ajx` karşılığının
+  bulunması.
