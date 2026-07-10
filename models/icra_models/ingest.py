@@ -47,16 +47,25 @@ def _yil_sira(dosya_no):
 
 
 @transaction.atomic
-def dosya_kunyesi_kaydet(rec):
-    """Tek bir UYAP kaydını (kapak künyesi) upsert eder. (Dosya, created) döner."""
+def dosya_kunyesi_kaydet(rec, yargi_turu=None):
+    """Tek bir UYAP kaydını (kapak künyesi) upsert eder. (Dosya, created) döner.
+
+    yargi_turu: bu kaydı getiren ARAMANIN yargı türü kodu (0/1/2/... — bkz.
+    CIOK_YARGI_TURU_SENKRON_PLANI.md §1.1), YANIT kaydının kendi 'birimTuru3'
+    alanından DEĞİL (o farklı bir kavram, §1.6). None ise (icra_core.py'nin
+    mevcut çağrısı gibi) Birim.yargi_turu hiç dokunulmaz — geriye dönük
+    uyumluluk için."""
+    birim_defaults = {
+        "ad": rec.get("birimAdi", "") or "",
+        "turu1": str(rec.get("birimTuru1", "") or ""),
+        "turu2": str(rec.get("birimTuru2", "") or ""),
+        "turu3": str(rec.get("birimTuru3", "") or ""),
+    }
+    if yargi_turu is not None:
+        birim_defaults["yargi_turu"] = yargi_turu
     birim, _ = Birim.objects.update_or_create(
         birim_id=str(rec.get("birimId", "")),
-        defaults={
-            "ad": rec.get("birimAdi", "") or "",
-            "turu1": str(rec.get("birimTuru1", "") or ""),
-            "turu2": str(rec.get("birimTuru2", "") or ""),
-            "turu3": str(rec.get("birimTuru3", "") or ""),
-        },
+        defaults=birim_defaults,
     )
     yil, sira = _yil_sira(rec.get("dosyaNo"))
     tur_kod = int(rec.get("dosyaTurKod", 0) or 0)
