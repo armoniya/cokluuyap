@@ -190,8 +190,10 @@ Evrak içerikleri kişisel veri (KVKK kapsamı). Cache dosyaları:
 1. ~~**Faz 0 (ön koşul, doğrulama):** evrak id'sinin kalıcı olup olmadığını
    teyit et.~~ → **TAMAMLANDI (2026-07-10).** Kalıcı anahtar `birim_evrak_no`
    olarak kesinleşti (bkz. §0.2).
-2. **Faz 1 (sıradaki adım):** `Evrak` modeli + migration; tekil evrak indirme
-   akışına "önce cache'e bak" mantığı; UYAP hata → cache fallback.
+2. ~~**Faz 1:** `Evrak` modeli + migration~~ → **TAMAMLANDI (2026-07-10).**
+   `models/icra_models/models.py`'e `ust_evrak` self-FK (ek desteği) dahil
+   eklendi, migration `0003_evrak.py` üretildi. Sıradaki adım: tekil evrak
+   indirme akışına "önce cache'e bak" mantığı; UYAP hata → cache fallback.
 3. **Faz 2:** Evrak listesi açıldığında "yeni var mı" karşılaştırması —
    gerçek uç nokta artık biliniyor: `list_dosya_evraklar.ajx` (POST,
    `{dosyaId, pageNumber}`), yanıt `tumEvraklar["<yıl>/<sıra_no>(<tür>)"]`

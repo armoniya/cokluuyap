@@ -169,3 +169,43 @@ class DosyaTaraf(models.Model):
 
     def __str__(self):
         return f"{self.dosya} · {self.get_rol_display()}: {self.taraf}"
+
+
+class Evrak(models.Model):
+    """Bir dosyaya ait evrak (karar, tebligat, dilekçe, dayanak vb.) önbellek
+    kaydı. KALICI anahtar = (dosya, birim_evrak_no) [uq_dosya_evrak].
+    UYAP'ın döndüğü evrakId/dosyaId/ggEvrakId OTURUMLUKTUR (canlı testte
+    doğrulandı, bkz. docs/BELGE_ONBELLEK_PLANI.md §0.2) — yalnız o oturumda
+    içerik indirmek için geçici kullanılır, burada SAKLANMAZ."""
+
+    dosya = models.ForeignKey(Dosya, on_delete=models.CASCADE, related_name="evraklar")
+    ust_evrak = models.ForeignKey("self", on_delete=models.CASCADE, null=True, blank=True,
+                                  related_name="ekler")
+
+    birim_evrak_no = models.PositiveIntegerField("Birim Evrak No", db_index=True)
+
+    evrak_turu = models.CharField("Evrak Türü", max_length=64, blank=True)
+    evrak_tip = models.CharField("Evrak Tipi", max_length=16, blank=True)
+    aciklama = models.CharField("Açıklama", max_length=500, blank=True)
+    evrak_tarihi = models.DateTimeField("Evrak Tarihi", null=True, blank=True)
+
+    mime_turu = models.CharField("MIME Türü", max_length=64, blank=True)
+    boyut = models.PositiveIntegerField("Boyut (bayt)", default=0)
+    sha256 = models.CharField("SHA-256", max_length=64, db_index=True)
+
+    dosya_yolu = models.CharField("Diskteki Dosya Yolu", max_length=500)
+    degisebilir = models.BooleanField("Değişebilir Evrak", default=False)
+
+    indirilme_zamani = models.DateTimeField(auto_now_add=True)
+    son_erisim_zamani = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Evrak"
+        verbose_name_plural = "Evraklar"
+        ordering = ["dosya", "birim_evrak_no"]
+        constraints = [
+            models.UniqueConstraint(fields=["dosya", "birim_evrak_no"], name="uq_dosya_evrak"),
+        ]
+
+    def __str__(self):
+        return f"{self.dosya} · {self.birim_evrak_no}"
