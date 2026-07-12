@@ -39,6 +39,7 @@ for _ad in ("stdout", "stderr"):
 import time
 import queue
 import threading
+import traceback
 import subprocess
 import tkinter as tk
 from tkinter import font as tkfont
@@ -491,6 +492,16 @@ class Panel(tk.Tk):
 
         self._show_login()
 
+    def report_callback_exception(self, exc, val, tb):
+        # Tkinter varsayılan olarak after()/bind() callback'lerindeki hatayı sessizce
+        # yutar (pythonw/frozen exe'de stderr yok, hata izi kaybolur) — bu yüzden tam
+        # traceback burada login_debug.log'a yazılır (kalıcı sağlamlaştırma).
+        try:
+            detay = "".join(traceback.format_exception(exc, val, tb))
+            _panel_login_dbg(f"YAKALANMAMIŞ CALLBACK HATASI:\n{detay}")
+        except Exception:
+            pass
+
     # ── Orijinal login modülünü arka planda yükle ──
     def _load_auth(self):
         try:
@@ -648,7 +659,30 @@ class Panel(tk.Tk):
 
     def _poll_login(self):
         try:
-            ok, msg = self.login_queue.get_nowait()
+            self._poll_login_body()
+        except Exception:
+            # KALICI SAĞLAMLAŞTIRMA: önceden burada oluşan bir istisna after()
+            # zincirini sessizce kesiyor, ekran sonsuza dek "Bağlanılıyor…"
+            # durumunda kalıyordu. Artık istisna loglanır ve kullanıcıya hata
+            # gösterilip giriş formu tekrar kullanılabilir hale gelir.
+            _panel_login_dbg(f"_poll_login İSTİSNA:\n{traceback.format_exc()}")
+            self.login_in_progress = False
+            try:
+                self.login_btn.set_state("normal")
+                self.login_btn.set_text("Giriş Yap")
+                self._set_login_status("Beklenmeyen bir hata oluştu (günlüğe yazıldı).", err=True)
+            except Exception:
+                pass
+
+    def _poll_login_body(self):
+        try:
+            # verify_credentials_thread kuyruğa (ok, mesaj, info) ÜÇLÜ demet koyar
+            # (bkz. Panel/web/server.py:221, "Uyap Haricen Giriş/uyap_app.py":1028).
+            # Burada 2'li unpack ("ok, msg = ...") KÖK NEDENDİ: her başarılı/başarısız
+            # sonuçta ValueError fırlatıyor, istisna Tk'nin varsayılan (sessiz)
+            # report_callback_exception'ında yutuluyor, after() zinciri hiç
+            # tamamlanmadan kesiliyor ve ekran "Bağlanılıyor…" durumunda kalıyordu.
+            ok, msg, _info = self.login_queue.get_nowait()
         except queue.Empty:
             if self.login_in_progress:
                 self.after(120, self._poll_login)
@@ -1386,6 +1420,19 @@ class Panel(tk.Tk):
         self.current = key
         label = self.labels.get(key, "")
         self.status.config(text=f"{label} görüntüleniyor")
+
+
+def _panel_login_dbg(msg):
+    """pythonw (konsolsuz) ortamda normalde sessizce yutulacak beklenmeyen giriş-akışı
+    hatalarını dosyaya yazar (bkz. report_callback_exception, _poll_login). Tamamen
+    try/except içinde, akışı asla bozmaz."""
+    try:
+        d = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "UyapIcra")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "login_debug.log"), "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{threading.current_thread().name}] panel.py: {msg}\n")
+    except Exception:
+        pass
 
 
 def _venv_python(penceresiz=False):
