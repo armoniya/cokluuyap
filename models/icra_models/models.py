@@ -173,6 +173,7 @@ class Dosya(models.Model):
         TALIMAT = 1, "Talimat"
         HUKUK_DEGISIK_IS = 14, "Hukuk Değişik İş Dosyası"
         HUKUK_DAVA = 15, "Hukuk Dava Dosyası"
+        CBS_SORUSTURMA = 16, "CBS Soruşturma Dosyası"
 
     dosya_id = models.CharField("UYAP Dosya Kimliği (oturumluk)", max_length=255,
                                 blank=True, db_index=True)
@@ -180,12 +181,23 @@ class Dosya(models.Model):
 
     yil = models.PositiveIntegerField("Dosya Yılı")
     sira_no = models.PositiveIntegerField("Dosya No")
-    dosya_no = models.CharField("Dosya No (ham)", max_length=20)   # "2025/237"
+    # max_length=20: yalnız İcra'nın "2025/237" biçimiyle canlı doğrulandı.
+    # "Yenile" artık her yargı türünü tarayabildiği (tum_turler) için AYNI hata
+    # sınıfı (bkz. durum/tur/DosyaTaraf.rol yorumları) burada da çıktı — henüz
+    # canlı doğrulanmamış türlerin dosyaNo biçimi 20 karakteri aşabiliyor.
+    # Aynı gerekçeyle Birim.ad ile aynı bol paya (255) çıkarıldı.
+    dosya_no = models.CharField("Dosya No (ham)", max_length=255)
 
     durum_kod = models.IntegerField(choices=Durum.choices, default=Durum.ACIK)
-    durum = models.CharField(max_length=20, blank=True)
+    # 'dosyaDurum' UYAP'ın kendi serbest metin etiketidir (choices DEĞİL,
+    # durum_kod'un görünen adı) — sabit bir kelime kümesi değil, yargı türüne
+    # göre değişen açıklamalar da olabilir. Daha önce AYNI hata sınıfı
+    # DosyaTaraf.rol'de yaşandı (bkz. migration 0005/0006, "Üçüncü Şahıs" gibi
+    # 10 karakteri aşan roller PostgreSQL DataError'a sebep olmuştu) — durum/tur
+    # da aynı riski taşıdığı için Birim.ad ile aynı bol payla (255) tutulur.
+    durum = models.CharField(max_length=255, blank=True)
     tur_kod = models.IntegerField(choices=Tur.choices, default=Tur.ESAS)
-    tur = models.CharField(max_length=40, blank=True)
+    tur = models.CharField(max_length=255, blank=True)
 
     acilis_tarihi = models.DateTimeField("Açılış Tarihi", null=True, blank=True)
     is_dava_dosyasi_acilmis = models.BooleanField(default=False)
@@ -232,12 +244,19 @@ class DosyaTaraf(models.Model):
 
     dosya = models.ForeignKey(Dosya, on_delete=models.CASCADE, related_name="taraf_baglari")
     taraf = models.ForeignKey(Taraf, on_delete=models.PROTECT, related_name="dosya_baglari")
-    # max_length=20: canlı doğrulanan en uzun değer "tasfiye memuru" (14) — Cbs/
-    # Tazminat Komisyonu Başkanlığı rol string'leri canlı doğrulanamadı (bu
-    # kullanıcının o türlerde dosyası yok), 20 bunlar için de makul bir pay bırakır.
-    rol = models.CharField(max_length=20, choices=Rol.choices)
-    vekil = models.ForeignKey(Vekil, on_delete=models.SET_NULL, null=True, blank=True,
-                              related_name="temsil_baglari")
+    # max_length=20 AYNI hata sınıfını (bkz. migration 0005/0006) 'tüm türler'
+    # taramasında TEKRAR verdi (kullanıcı bulgusu, 2026-07-11): "Dosyalarım
+    # (Tümü)" artık her yargı türünü tarıyor, henüz canlı doğrulanmamış
+    # türlerin rol metinleri 20 karakteri aşabiliyor. durum/tur ile AYNI
+    # gerekçeyle (bkz. Dosya.durum yorumu) Birim.ad'la aynı bol paya (255)
+    # çıkarıldı — choices yalnız görüntüleme/bilinen değerler içindir, DB
+    # düzeyinde zorlanmaz.
+    rol = models.CharField(max_length=255, choices=Rol.choices)
+    # ManyToMany (TEKİL ForeignKey DEĞİL): kullanıcı bulgusu (2026-07-11) —
+    # UYAP'ın taraf_bilgileri yanıtında bir tarafın BİRDEN FAZLA vekili olabilir
+    # ("[AD1, AD2]" — bkz. dosya_core._vekiller_kaydet). Eskiden tekil FK olduğu
+    # için yalnız ilk vekil kaydedilip diğerleri sessizce atılıyordu.
+    vekiller = models.ManyToManyField(Vekil, blank=True, related_name="temsil_baglari")
     sira = models.PositiveIntegerField(default=0)
 
     class Meta:

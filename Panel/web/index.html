@@ -445,6 +445,8 @@
           <select id="dg-tur"><option>Tümü</option></select>
           <label class="icra-k">Yargı Birimi</label>
           <select id="dg-birim"><option>Tümü</option></select>
+          <label class="icra-k">Mahkeme</label>
+          <select id="dg-mahkeme"><option>Tümü</option></select>
           <label class="icra-k">Dosya Türü</label>
           <select id="dg-dosya-tur"><option>Tümü</option></select>
           <label class="icra-k">Durum</label>
@@ -455,6 +457,8 @@
           <input type="text" id="dg-tarih-bas" class="icra-inp" placeholder="GG.AA.YYYY">
           <span class="icra-dash">–</span>
           <input type="text" id="dg-tarih-bit" class="icra-inp" placeholder="GG.AA.YYYY">
+          <label class="icra-k">Taraf Adı</label>
+          <input type="text" id="dg-taraf-adi" class="icra-inp" placeholder="Ad, soyad veya unvan">
         </div>
       </div>
 
@@ -462,6 +466,7 @@
         <button class="conn-btn inline" id="dg-filtrele">Filtrele</button>
         <button class="conn-btn ghost inline" id="dg-temizle">Temizle</button>
         <button class="conn-btn ghost inline" id="dg-yenile">Yenile (UYAP'tan Güncelle)</button>
+        <button class="conn-btn ghost inline" id="dg-yenile-tumu">Tüm Dosyaları Güncelle</button>
         <button class="conn-btn ghost inline" id="dg-detay">Dosya Görüntüle</button>
         <span class="conn-status" id="dg-status"></span>
       </div>
@@ -530,6 +535,18 @@
           </label>
         </div>
         <span class="conn-status" id="set-status"></span>
+      </div>
+
+      <div class="conn-card set-card">
+        <span class="legend">Taraf Görünümü</span>
+        <h3>Kendi Vekil Ad(lar)ı</h3>
+        <p class="conn-hint">Kalabalık İcra dosyalarında (Dosyalarım — Tümü ekranı) Alacaklı ve
+          Borçlu dışında ayrıca vekili olduğunuz taraf da gösterilsin diye kendi ad-soyad(lar)ınızı
+          UYAP'taki vekil kaydınızla AYNI yazımla, birden fazlaysa virgülle ayırarak girin
+          (ör. "Utku Alpaslan").</p>
+        <input type="text" id="set-kendi-vekil" class="icra-inp" placeholder="Utku Alpaslan">
+        <button class="conn-btn" id="set-kendi-vekil-kaydet" style="margin-top:10px">Kaydet</button>
+        <span class="conn-status" id="set-kendi-vekil-status"></span>
       </div>
     </section>
 

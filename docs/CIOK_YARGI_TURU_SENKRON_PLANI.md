@@ -628,11 +628,32 @@ tercihiyle (bu oturumun başındaki git yedekleme kararı) tutarlı: yeni
   pay olarak kalıyor (Cbs'nin aksine kesinleşmedi) — ileride bu türde bir
   dosya açılırsa yeniden ele alınabilir, aksi istenmedikçe iş kalemi değil.
 
+- **Gerçek PostgreSQL uçtan uca DB yazma testi — TAMAMLANDI (2026-07-11):**
+  önceki oturumlarda bu geliştirme ortamında embedded Postgres binaries
+  hiç yoktu (yalnız SQLite ORM testiyle yetinilmişti). Bu oturumda
+  EnterpriseDB'nin resmi `postgresql-16.14-2-windows-x64-binaries.zip`
+  paketi `%LOCALAPPDATA%\UyapIcra\pgsql` altına kurulup `db_baslat.py`
+  akışı (initdb scram-sha-256 + `uyap_icra` veritabanı + 6 migration)
+  gerçek bir PostgreSQL sunucusunda ilk kez uçtan uca çalıştırıldı.
+  Ardından `dosya_taraf_kaydet` doğrudan gerçek DB'ye karşı test edildi:
+  migration `0006`'nın çözdüğü tam senaryo — `max_length=10`'u aşan üç rol
+  string'i ("Üçüncü Şahıs"=12, "Tasfiye Memuru"=14, "Diğer Taraf"=11) tek
+  bir `transaction.atomic()` bloğunda yazıldı, PostgreSQL DataError
+  vermedi, 3 satır da doğru uzunlukta kaydedildi; vekil ayrıştırma
+  ("[HAKAN TOLUNAY BURHAN]"→ad/soyad) doğru çalıştı. İkinci aynı çağrı
+  `update_or_create`'in `(dosya,taraf,rol)` anahtarıyla yinelenme
+  YARATMADIĞINI doğruladı (satır sayısı 3'te sabit kaldı). Test verisi
+  (Birim/Dosya/Taraf/DosyaTaraf) doğrulama sonrası silindi, DB tekrar boş
+  duruma döndü. `db_baslat.py`'nin arka planda `pg_ctl start` ile
+  başlattığı sunucu süreci Windows'ta bu ortamdaki Bash arka plan
+  süreçlerinin erken sonlandırılmasından ETKİLENMEDİ (pg_ctl kendi
+  sürecinden ayrışıyor) — yalnız orkestrasyon script'i (`db_baslat.py`)
+  içindeki `createdb`/`migrate` adımları elle (doğrudan `createdb.exe` +
+  `manage.py migrate`) tamamlandı.
 - **Kalan (henüz yapılmadı):** Dosya Bilgileri ayrıntısının UYDURULMAYAN
   kalan alanları (faiz/masraf ayrıntısı, ilgili/seri/birleşen dosya
   listeleri, başvuruya bırakılma tarihi — canlı JSON dökümü yapıldığında
-  tamamlanacak). Gerçek PostgreSQL ile uçtan uca DB yazma testi (bu
-  geliştirme ortamında embedded Postgres yok). Ayrıca ileride istenirse:
-  zamanlayıcı aralığının (şu an sabit 30 dk) bir ayar ekranından değiştirilebilir hâle getirilmesi,
+  tamamlanacak). Ayrıca ileride istenirse: zamanlayıcı aralığının (şu an
+  sabit 30 dk) bir ayar ekranından değiştirilebilir hâle getirilmesi,
   "stale dosyaId" davranışının canlı doğrulanması (bkz. Faz 5 "kabul
   edilmiş bilinmeyen").

@@ -42,11 +42,23 @@ def auto_connect_mode(auth):
     return AUTO_VARSAYILAN
 
 
+def kendi_vekil_adlari_metni(auth):
+    """config'ten 'Dosyalarım (Tümü)' ekranının kalabalık İcra dosyalarında
+    'bizim taraf'ı seçerken kullandığı kendi vekil ad(lar)ını döner (bkz.
+    dosya_core._kendi_vekil_adlari — AYNI ayar anahtarı: kendi_vekil_adlari)."""
+    try:
+        cfg = auth.load_config() if auth else {}
+        return cfg.get("kendi_vekil_adlari", "") or ""
+    except Exception:
+        return ""
+
+
 class AyarlarPanel:
     def __init__(self, parent, app):
         self.parent = parent
         self.app = app
         self.auto_var = tk.StringVar(value=auto_connect_mode(self._auth()))
+        self.vekil_var = tk.StringVar(value=kendi_vekil_adlari_metni(self._auth()))
         self._build()
 
     def _auth(self):
@@ -93,6 +105,39 @@ class AyarlarPanel:
                                   font=self.app.f_small)
         self.durum_lbl.pack(anchor="w", pady=(4, 0))
 
+        # ── Kendi Vekil Ad(lar)ı kartı ──
+        kart2 = tk.Frame(wrap, bg=C.CARD, highlightbackground=C.CARD_EDGE,
+                         highlightthickness=1)
+        kart2.pack(fill="x", pady=(16, 0))
+        ic2 = tk.Frame(kart2, bg=C.CARD)
+        ic2.pack(fill="x", padx=20, pady=18)
+
+        tk.Label(ic2, text="TARAF GÖRÜNÜMÜ", bg=C.SAGE_TINT, fg=C.SAGE_DK,
+                 font=self.app.f_small, padx=9, pady=2).pack(anchor="w")
+        tk.Label(ic2, text="Kendi Vekil Ad(lar)ı", bg=C.CARD, fg=C.INK,
+                 font=self.app.f_card_t).pack(anchor="w", pady=(10, 2))
+        tk.Label(ic2, text="Kalabalık İcra dosyalarında (Dosyalarım — Tümü ekranı) Alacaklı ve "
+                 "Borçlu dışında ayrıca vekili olduğunuz taraf da gösterilsin diye kendi "
+                 "ad-soyad(lar)ınızı UYAP'taki vekil kaydınızla AYNI yazımla, birden fazlaysa "
+                 "virgülle ayırarak girin (ör. \"Utku Alpaslan\").",
+                 bg=C.CARD, fg=C.INK_SOFT, font=self.app.f_body, wraplength=560,
+                 justify="left", anchor="w").pack(anchor="w", pady=(0, 10))
+
+        giris = tk.Entry(ic2, textvariable=self.vekil_var, font=self.app.f_body,
+                         bg=C.BG, fg=C.INK, relief="flat", highlightthickness=1,
+                         highlightbackground=C.CARD_EDGE, highlightcolor=C.SAGE_DK)
+        giris.pack(fill="x", ipady=6)
+
+        kaydet_btn = tk.Button(ic2, text="Kaydet", command=self._vekil_kaydet,
+                               font=self.app.f_nav_b, bg=C.SAGE, fg="white",
+                               relief="flat", cursor="hand2", padx=14, pady=4,
+                               activebackground=C.SAGE_DK, activeforeground="white")
+        kaydet_btn.pack(anchor="w", pady=(10, 0))
+
+        self.vekil_durum_lbl = tk.Label(ic2, text="", bg=C.CARD, fg=C.SAGE_DK,
+                                        font=self.app.f_small)
+        self.vekil_durum_lbl.pack(anchor="w", pady=(4, 0))
+
     # ─────────────────────────── kaydet ───────────────────────────
     def _kaydet(self):
         auth = self._auth()
@@ -107,3 +152,17 @@ class AyarlarPanel:
             self.durum_lbl.config(text="✔ Kaydedildi.", fg=C.SAGE_DK)
         except Exception as e:
             self.durum_lbl.config(text="Kaydedilemedi: %s" % e, fg=C.CLAY)
+
+    def _vekil_kaydet(self):
+        auth = self._auth()
+        if not auth:
+            self.vekil_durum_lbl.config(text="Ayar kaydedilemedi (giriş modülü yüklenmedi).",
+                                        fg=C.CLAY)
+            return
+        try:
+            cfg = auth.load_config()
+            cfg["kendi_vekil_adlari"] = self.vekil_var.get().strip()
+            auth.save_config(cfg)
+            self.vekil_durum_lbl.config(text="✔ Kaydedildi.", fg=C.SAGE_DK)
+        except Exception as e:
+            self.vekil_durum_lbl.config(text="Kaydedilemedi: %s" % e, fg=C.CLAY)

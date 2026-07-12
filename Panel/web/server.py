@@ -602,29 +602,39 @@ AUTO_DEFAULT = "off"
 def get_settings():
     """Mevcut tercihler. Giriş modülü hazır değilse varsayılanlar döner."""
     mode = AUTO_DEFAULT
+    kendi_vekil = ""
     if _auth is not None:
         try:
             cfg = _auth.load_config()
             v = cfg.get("auto_connect", AUTO_DEFAULT)
             if v in AUTO_MODES:
                 mode = v
+            kendi_vekil = cfg.get("kendi_vekil_adlari", "") or ""
         except Exception:
             pass
-    return {"auto_connect": mode}
+    return {"auto_connect": mode, "kendi_vekil_adlari": kendi_vekil}
 
 
 def set_settings(data):
-    """auto_connect tercihini ortak config'e yazar (DPAPI altyapısı korunur)."""
+    """auto_connect / kendi_vekil_adlari tercihlerini ortak config'e yazar
+    (DPAPI altyapısı korunur). `kendi_vekil_adlari` — bkz.
+    `dosya_core._kendi_vekil_adlari`: 'Dosyalarım (Tümü)' ekranının kalabalık
+    İcra dosyalarında 'bizim taraf'ı seçmesi için kullanılır (kullanıcı
+    bulgusu, 2026-07-12)."""
     if _auth is None:
         return {"ok": False, "msg": (_auth_err or "Giriş modülü henüz hazır değil.")}
-    mode = (data.get("auto_connect") or "").strip()
-    if mode not in AUTO_MODES:
-        return {"ok": False, "msg": "Geçersiz otomatik bağlantı kipi."}
     try:
         cfg = _auth.load_config()
-        cfg["auto_connect"] = mode
+        if "auto_connect" in data:
+            mode = (data.get("auto_connect") or "").strip()
+            if mode not in AUTO_MODES:
+                return {"ok": False, "msg": "Geçersiz otomatik bağlantı kipi."}
+            cfg["auto_connect"] = mode
+        if "kendi_vekil_adlari" in data:
+            cfg["kendi_vekil_adlari"] = (data.get("kendi_vekil_adlari") or "").strip()
         _auth.save_config(cfg)
-        return {"ok": True, "auto_connect": mode}
+        return {"ok": True, "auto_connect": cfg.get("auto_connect", AUTO_DEFAULT),
+                "kendi_vekil_adlari": cfg.get("kendi_vekil_adlari", "")}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
@@ -847,19 +857,46 @@ def dosyalarim_fields():
 
 def dosyalarim_birimler(yargi_turu):
     if _dosya is None:
-        return {"birimler": []}
+        return {"birimler": [], "dosya_turleri": []}
     try:
-        return {"birimler": _dosya.yargi_birimleri_db_den_yukle(int(yargi_turu))}
+        birimler = _dosya.yargi_birimleri_getir_veya_db(int(yargi_turu), lambda *a, **k: None)
     except Exception:
-        return {"birimler": []}
+        birimler = []
+    try:
+        dosya_turleri = [{"kod": k, "ad": a} for k, a in _dosya.dosya_tur_secenekleri(int(yargi_turu))]
+    except Exception:
+        dosya_turleri = []
+    return {"birimler": birimler, "dosya_turleri": dosya_turleri}
+
+
+def dosyalarim_mahkemeler(yargi_turu, yargi_birimi_kod):
+    """'Mahkeme' (BELİRLİ Birim, ör. 'ANKARA 4. ASLİYE HUKUK MAHKEMESİ')
+    seçeneklerini döner — 'Yargı Birimi' (mahkeme TÜRÜ) filtresinden AYRI,
+    kullanıcı bulgusu 2026-07-12: 'yargı türü ve yargı birimi var fakat
+    mahkeme ile filtreleme yok'. Her iki parametre de opsiyonel, verilirse
+    kademeli daraltır (bkz. `dosya_core.mahkeme_secenekleri`)."""
+    if _dosya is None:
+        return {"mahkemeler": []}
+    tur = yargi_turu if yargi_turu not in (None, -1, "") else None
+    kod = yargi_birimi_kod or None
+    try:
+        return {"mahkemeler": _dosya.mahkeme_secenekleri(tur, kod)}
+    except Exception:
+        return {"mahkemeler": []}
 
 
 def dosyalarim_list(data):
     if _dosya is None:
         return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil.", "kayitlar": []}
-    filtreler = {k: (data.get(k) or None) for k in (
-        "yargi_turu", "yargi_birimi_kod", "tur_kod", "durum_kod",
-        "tarih_baslangic", "tarih_bitis")}
+    # `data.get(k) or None` YAZILMAZ: Ceza'nın yargi_turu kodu ve İcra'nın
+    # "Esas" tur_kod'u 0'dır (models.py Birim/Dosya.Tur yorumları) — Python'da
+    # 0 falsy olduğundan `or None` bu geçerli seçimleri sessizce "Tümü"ye
+    # çevirirdi (kullanıcı bulgusu, 2026-07-13: aynı desen dosyalarim_yenile_
+    # baslat'ta da vardı, orada da düzeltildi). Yalnız GERÇEKTEN boş/eksik
+    # alanlar None sayılır.
+    filtreler = {k: data[k] for k in (
+        "yargi_turu", "yargi_birimi_kod", "mahkeme_id", "tur_kod", "durum_kod",
+        "tarih_baslangic", "tarih_bitis", "taraf_adi") if data.get(k) not in (None, "")}
     try:
         return {"ok": True, "kayitlar": _dosya.dosyalarim_db_listele(filtreler)}
     except Exception as e:
@@ -879,20 +916,30 @@ def dosyalarim_detay(data):
     return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham, "taraflar": taraflar}
 
 
-def dosyalarim_yenile_baslat(token):
+def dosyalarim_yenile_baslat(token, data=None):
     if _dosya is None:
         return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil."}
     onceki = DOSYALARIM_JOBS.get(token)
     if onceki and onceki["running"]:
         return {"ok": False, "msg": "Önceki yenileme sürüyor."}
     job = DOSYALARIM_JOBS[token] = {"running": True, "logs": [], "sonuc": None}
+    data = data or {}
+    # `or None` YAZILMAZ: Ceza'nın yargi_turu kodu 0'dır — 0 falsy olduğundan
+    # `or None` bunu "Tümü" sanır (kullanıcı bulgusu, 2026-07-13; bkz.
+    # dosyalarim_list'teki aynı düzeltme).
+    yargi_turu = data.get("yargi_turu")
+    if yargi_turu in (None, ""):
+        yargi_turu = None
+    yargi_birimi_kod = data.get("yargi_birimi_kod") or None
+    tum_turler = bool(data.get("tum_turler"))
 
     def _log(m):
         job["logs"].append(str(m))
 
     def _run():
         try:
-            toplam, sonuclar = _dosya.dosyalarim_yenile(_log)
+            toplam, sonuclar = _dosya.dosyalarim_yenile(
+                _log, yargi_turu=yargi_turu, yargi_birimi_kod=yargi_birimi_kod, tum_turler=tum_turler)
             job["sonuc"] = {"toplam": toplam, "sonuclar": sonuclar}
         except Exception as e:
             job["sonuc"] = {"hata": str(e)}
@@ -1837,6 +1884,17 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 yargi_turu = -1
             self._json(200, dosyalarim_birimler(yargi_turu))
+        elif path == "/api/dosyalarim/mahkemeler":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                yargi_turu = int(q.get("yargi_turu", ["-1"])[0])
+            except Exception:
+                yargi_turu = -1
+            yargi_birimi_kod = (q.get("yargi_birimi_kod", [""])[0] or "").strip()
+            self._json(200, dosyalarim_mahkemeler(yargi_turu, yargi_birimi_kod))
         elif path == "/api/dosyalarim/yenile-durum":
             if not self._user():
                 self._json(401, {"error": "oturum yok"})
@@ -2054,7 +2112,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._user():
                 self._json(401, {"ok": False, "msg": "oturum yok"})
                 return
-            self._json(200, dosyalarim_yenile_baslat(self._token()))
+            self._json(200, dosyalarim_yenile_baslat(self._token(), self._body()))
         elif path == "/api/uretilmis/run":
             if not self._user():
                 self._json(401, {"ok": False, "msg": "oturum yok"})
