@@ -127,9 +127,15 @@ def _exe(ad):
 
 
 def _calistir(args, **kw):
-    """Sessiz subprocess; çıktı (returncode, stdout+stderr) döner."""
+    """Sessiz subprocess; çıktı (returncode, stdout+stderr) döner.
+
+    stdin HER ZAMAN DEVNULL: GUI (pythonw, konsolsuz) altında çağrıldığında
+    inherited stdin geçersiz/kapalı olabilir; psql gibi bir araç parola için
+    interaktif prompt'a düşerse bu olmadan sonsuza dek okumaya çalışıp
+    panel.py'yi pencere hiç açılmadan asılı bırakırdı (canlı görüldü)."""
     kw.setdefault("stdout", subprocess.PIPE)
     kw.setdefault("stderr", subprocess.STDOUT)
+    kw.setdefault("stdin", subprocess.DEVNULL)
     kw.setdefault("text", True)
     kw.setdefault("encoding", "utf-8")
     kw.setdefault("errors", "replace")
@@ -189,14 +195,28 @@ def guvenlik_yukselt(log):
         return True
     with open(hba, "r", encoding="utf-8") as f:
         icerik = f.read()
-    if "trust" not in icerik:
+    # Yalnızca aktif (yorum/boş olmayan) satırların METHOD sütununu kontrol et.
+    # Stok pg_hba.conf'un üretilen açıklama başlığı örnek olarak "trust" kelimesini
+    # YORUM satırında geçirir (`# METHOD can be "trust", ...`) — saf "trust" in icerik
+    # araması buna yanlış-pozitif verip her açılışta gereksiz yükseltme denemesi
+    # başlatıyordu; bu deneme de psql'in parola isteyip konsolsuz ortamda sonsuza
+    # dek asılı kalmasına yol açıyordu (panel.py penceresi hiç açılmıyordu).
+    trust_var_mi = False
+    for satir in icerik.splitlines():
+        satir = satir.split("#", 1)[0].strip()
+        if not satir:
+            continue
+        if satir.split()[-1] == "trust":
+            trust_var_mi = True
+            break
+    if not trust_var_mi:
         return True  # zaten yükseltilmiş
     log("… mevcut veri kümesi 'trust' (parolasız) modda; parolalı erişime yükseltiliyor")
     parola = _db_parolasi()
     rc, out = _calistir([
         _exe("psql"), "-U", DB_USER, "-h", DB_HOST, "-p", DB_PORT, "-d", "postgres",
         "-c", f"ALTER USER {DB_USER} WITH PASSWORD '{_sql_literal_kacir(parola)}'",
-    ])
+    ], env=dict(os.environ, PGPASSWORD=parola))
     if rc != 0:
         log("⛔ parola ataması başarısız:\n" + out)
         return False
