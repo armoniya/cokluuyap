@@ -125,8 +125,12 @@
   function begin(mode) {
     var sel = selectedKeys();
     if (!sel.length) { log("En az bir sorgu sütunu seçin."); return; }
-    post("api/sgk/start", { mode: mode, selected: sel }).then(function (d) {
-      if (!d.ok) log(mode === "retry" ? "Tekrar denenecek hatalı hücre yok." : "Başlatılamadı.");
+    window.topluIs.baslat(function (extra) {
+      var body = { mode: mode, selected: sel };
+      for (var k in extra) body[k] = extra[k];
+      return post("api/sgk/start", body);
+    }, function (t) { statusEl.textContent = "● " + t; }).then(function (d) {
+      if (!d.ok && !d.cakisma) log(mode === "retry" ? "Tekrar denenecek hatalı hücre yok." : "Başlatılamadı.");
     });
   }
   pauseBtn.addEventListener("click", function () { post("api/sgk/pause"); });

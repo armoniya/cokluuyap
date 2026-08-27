@@ -246,6 +246,8 @@
 
       <div class="sgk-toolbar">
         <button class="conn-btn inline" id="icra-sorgula">Sorgula</button>
+        <button class="conn-btn ghost inline" id="icra-pause" disabled>Duraklat</button>
+        <button class="conn-btn ghost inline" id="icra-stop" disabled>Durdur</button>
         <button class="conn-btn ghost inline" id="icra-temizle">Temizle</button>
         <button class="conn-btn ghost inline" id="icra-detay">Dosya Görüntüle</button>
         <span class="conn-status" id="icra-status"></span>
@@ -460,6 +462,14 @@
           <label class="icra-k">Taraf Adı</label>
           <input type="text" id="dg-taraf-adi" class="icra-inp" placeholder="Ad, soyad veya unvan">
         </div>
+        <div class="icra-row" id="dg-icra-extra" style="display:none">
+          <label class="icra-k">Alacaklı</label>
+          <input type="text" id="dg-alacakli" class="icra-inp" list="dg-alacakli-list" placeholder="Alacaklı ad, soyad veya unvan — seçin ya da yazın">
+          <datalist id="dg-alacakli-list"></datalist>
+          <label class="icra-k">Borçlu</label>
+          <input type="text" id="dg-borclu" class="icra-inp" list="dg-borclu-list" placeholder="Borçlu ad, soyad veya unvan — seçin ya da yazın">
+          <datalist id="dg-borclu-list"></datalist>
+        </div>
       </div>
 
       <div class="sgk-toolbar">
@@ -467,18 +477,88 @@
         <button class="conn-btn ghost inline" id="dg-temizle">Temizle</button>
         <button class="conn-btn ghost inline" id="dg-yenile">Yenile (UYAP'tan Güncelle)</button>
         <button class="conn-btn ghost inline" id="dg-yenile-tumu">Tüm Dosyaları Güncelle</button>
+        <button class="conn-btn ghost inline" id="dg-pause" disabled>Duraklat</button>
+        <button class="conn-btn ghost inline" id="dg-stop" disabled>Durdur</button>
         <button class="conn-btn ghost inline" id="dg-detay">Dosya Görüntüle</button>
         <span class="conn-status" id="dg-status"></span>
       </div>
 
       <div class="sgk-tablewrap">
         <table class="sgk-table" id="dg-table">
-          <thead><tr id="dg-head"></tr></thead>
+          <thead>
+            <tr id="dg-head"></tr>
+            <tr id="dg-filter-row"></tr>
+          </thead>
           <tbody id="dg-body"></tbody>
         </table>
       </div>
 
       <div class="logbox" id="dg-log"></div>
+    </section>
+
+    <!-- Barkod Sorgu (Kapalı Tebligat — PTT) -->
+    <section class="panel" data-panel="barkod_sorgu">
+      <h1 class="h1">Barkod Sorgu (Kapalı Tebligat — PTT)</h1>
+      <p class="sub">Aşağıdan İcra dosyalarınızı (yerel veritabanından, "Dosyalarım (Tümü)" ile aynı
+        kaynaktan) filtreleyip seçin ve "Seçilenleri Sorgula"ya basın — her dosyadaki 'Kapalı
+        Tebligat' evrakının barkodu PTT'de sorgulanır ve sonuç veritabanına kaydedilir.</p>
+
+      <div class="conn-card icra-criteria">
+        <div class="icra-row">
+          <label class="icra-k">İcra Dairesi</label>
+          <select id="bk-birim"><option>Tümü</option></select>
+          <label class="icra-k">Durum</label>
+          <select id="bk-durum"><option>Tümü</option></select>
+        </div>
+        <div class="icra-row">
+          <label class="icra-k">Açılış Tarihi</label>
+          <input type="text" id="bk-tarih-bas" class="icra-inp" placeholder="GG.AA.YYYY">
+          <span class="icra-dash">–</span>
+          <input type="text" id="bk-tarih-bit" class="icra-inp" placeholder="GG.AA.YYYY">
+          <label class="icra-k">Alacaklı</label>
+          <input type="text" id="bk-alacakli" class="icra-inp" list="bk-alacakli-list" placeholder="Alacaklı ad, soyad veya unvan">
+          <datalist id="bk-alacakli-list"></datalist>
+          <label class="icra-k">Borçlu</label>
+          <input type="text" id="bk-borclu" class="icra-inp" list="bk-borclu-list" placeholder="Borçlu ad, soyad veya unvan">
+          <datalist id="bk-borclu-list"></datalist>
+        </div>
+      </div>
+
+      <div class="sgk-toolbar">
+        <button class="conn-btn inline" id="bk-filtrele">Filtrele</button>
+        <button class="conn-btn ghost inline" id="bk-temizle">Temizle</button>
+        <button class="conn-btn ghost inline" id="bk-sorgula">Seçilenleri Sorgula</button>
+        <button class="conn-btn ghost inline" id="bk-pause" disabled>Duraklat</button>
+        <button class="conn-btn ghost inline" id="bk-stop" disabled>Durdur</button>
+        <span class="conn-status" id="bk-status"></span>
+      </div>
+
+      <div class="sgk-tablewrap">
+        <table class="sgk-table" id="bk-table">
+          <thead>
+            <tr id="bk-head"></tr>
+            <tr id="bk-filter-row"></tr>
+          </thead>
+          <tbody id="bk-body"></tbody>
+        </table>
+      </div>
+
+      <div class="logbox" id="bk-log"></div>
+
+      <div class="panel-head" style="margin-top:24px">
+        <h1 class="h1" style="font-size:18px">Geçmiş Barkod Sorgu Sonuçları</h1>
+      </div>
+      <p class="sub">Veritabanına daha önce kaydedilmiş sonuçlar (barkod/PTT durumu/mazbata).</p>
+      <div class="sgk-toolbar">
+        <button class="conn-btn ghost inline" id="bk-gecmis-yenile">Geçmişi Yenile</button>
+        <span class="conn-status" id="bk-gecmis-status"></span>
+      </div>
+      <div class="sgk-tablewrap">
+        <table class="sgk-table" id="bk-gecmis-table">
+          <thead><tr id="bk-gecmis-head"></tr></thead>
+          <tbody id="bk-gecmis-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- Senkron Kapsamı -->
@@ -631,6 +711,7 @@
 
 <script src="static/app.js"></script>
 <script src="static/conn.js"></script>
+<script src="static/toplu_is.js"></script>
 <script src="static/udf.js"></script>
 <script src="static/sgk.js"></script>
 <script src="static/icra.js"></script>
@@ -638,6 +719,7 @@
 <script src="static/logger.js"></script>
 <script src="static/uretilmis.js"></script>
 <script src="static/dosyalarim_genel.js"></script>
+<script src="static/barkod.js"></script>
 <script src="static/senkron_kapsami.js"></script>
 <script src="static/settings.js"></script>
 </body>

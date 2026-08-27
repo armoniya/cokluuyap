@@ -40,7 +40,7 @@ from aiortc import RTCPeerConnection, RTCConfiguration, RTCSessionDescription
 
 from . import uyap_proxy
 from . import jobs
-from ._runtime import interactive_write, WRITE_METHODS as _WRITE_METHODS, is_read_hint
+from ._runtime import interactive_write, WRITE_METHODS as _WRITE_METHODS
 from .p2p_wire import Reassembler, send_message, load_ice_servers, fetch_ice_servers, AGENT_PREFIX
 
 try:
@@ -269,13 +269,12 @@ async def handle_uyap_request(meta: dict, body: bytes):
         ACTIVE_DOWNLOADS[path] = event
 
     try:
-        # Değiştiren işlemler tek tek, sırayla UYAP'a gider. Bireysel (anlık) istek olduğu
-        # için YÜKSEK öncelikli geçitten geçer: arka plandaki toplu iş, bu istek bitene
-        # kadar sıradaki adımını bekler.
-        # İSTİSNA (adil sıralama): istemci POST'u X-Uyap-Read ile "okuma" işaretlerse (durum
-        # değiştirmeyen sorgu, ör. icra/SGK dosya sorgusu) yazma kilidine SOKULMAZ; toplu
-        # sorgu diğer kullanıcıların bireysel isteklerini bekletmesin.
-        if method.upper() in _WRITE_METHODS and not is_read_hint(meta.get("headers")):
+        # Değiştiren işlemler (POST/PUT/PATCH/DELETE — durum DEĞİŞTİRMEYEN "okuma-ipuçlu"
+        # sorgular DAHİL, bkz. _runtime modül docstring'i: UYAP eşzamanlı HİÇBİR isteği
+        # kabul etmiyor) tek tek, sırayla UYAP'a gider. Bireysel (anlık) istek olduğu için
+        # YÜKSEK öncelikli geçitten geçer: arka plandaki toplu iş, bu istek bitene kadar
+        # sıradaki adımını bekler. Yalnız gerçek GET'ler (statik/gezinme) kilitlenmez.
+        if method.upper() in _WRITE_METHODS:
             async with interactive_write():
                 return await _fetch_uyap(method, path, query, body, fwd_headers, proxy_base, store=cacheable)
         return await _fetch_uyap(method, path, query, body, fwd_headers, proxy_base, store=cacheable)

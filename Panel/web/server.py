@@ -24,9 +24,11 @@ import time
 import queue
 import base64
 import asyncio
+import inspect
 import secrets
 import argparse
 import tempfile
+import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -62,6 +64,12 @@ try:
 except Exception as _e:   # pragma: no cover
     magaza_core = None
     print("[web] magaza_core yuklenemedi:", _e)
+
+# Toplu iş duraklat/durdur/karma çekirdeği (masaüstüyle AYNI modül, saf Python —
+# tkinter bağımlısı DEĞİL). BARE import edilir (bkz. modül başlığı) — bu süreçte
+# (web sunucusu) tek bir KAYIT_DEFTERI tekiline karşılık gelir; masaüstü SÜRECİYLE
+# PAYLAŞILMAZ (ayrı süreçler, bilerek ayrı kayıt defterleri — bkz. bellek notu).
+import toplu_is_kontrol
 
 _auth = None          # uyap_app modülü (arka planda yüklenir)
 _auth_err = None
@@ -152,8 +160,43 @@ ICRA_JOBS = {}        # token -> IcraJob (oturum başına sorgu durumu)
 # sarmalar; bkz. docs/CIOK_YARGI_TURU_SENKRON_PLANI.md §7/§8).
 _dosya = None
 _dosya_err = None
-# Masaüstü IcraDosyalarimPanel ile AYNI sabit 7 kolon (icra_core._kolonlar eşi).
-ICRA_COLUMNS = ['alacakli', 'borclu', 'birimAdi', 'dosyaYil', 'dosyaNo', 'dosyaTur', 'acilisTarihi']
+# Barkod Sorgu (Kapalı Tebligat — PTT) — dosya_core ile aynı desen, masaüstü
+# Panel/modules/barkod_sorgu_panel.py'nin web köprüsü.
+_barkod = None
+_barkod_err = None
+# Masaüstü IcraDosyalarimPanel ile AYNI kolonlar (icra_core.DEFAULT_ACTIVE eşi).
+# Kesinleşme/Tebliğ Durumu (2026-08-14, kullanıcı isteği): "Tüm Dosyalarım"da
+# DEĞİL burada — bkz. icra_core.db_dosyalari_getir'deki AYNI not.
+ICRA_COLUMNS = ['alacakli', 'borclu', 'birimAdi', 'dosyaYil', 'dosyaNo', 'dosyaTur', 'acilisTarihi',
+                'kesinlesme_durumu', 'tebligat_durumu']
+
+
+def _toplu_is_basvur(ad, kontrol, data):
+    """Toplu iş (Dosya Sorgulama/Barkod/SGK/Üretilen Modül) başlatılmadan ÖNCE
+    `toplu_is_kontrol.KAYIT_DEFTERI`'ne başvurur. Masaüstündeki modal diyaloğun
+    (toplu_is_dialog.py) web eşidir — burada senkron bir pencere YOKTUR, bunun
+    yerine istemci (JS) `data["mod"]` alanıyla kararını bildirir:
+      mod yok      → ilk deneme: çakışma varsa kaydetmeden bildirir ("cakisma")
+      mod="sira"   → istemci "Sıraya Koy" seçti: hâlâ doluysa "sirada" döner
+                     (istemci birkaç saniye sonra AYNI mod ile tekrar dener)
+      mod="karma"  → istemci "Karma Çalıştır" seçti: yürüyen iş(ler)le katı
+                     nöbetleşmeye KATILIR ve hemen kaydedilir
+    Döner: (durum, bilgi) — durum "ok" ise çağıran taraf işi hemen başlatabilir
+    (kayıt zaten yapılmıştır), aksi halde BAŞLATMAMALI, yanıtı olduğu gibi
+    istemciye döndürmelidir."""
+    mod = (data or {}).get("mod")
+    if mod == "karma":
+        _, mevcut = toplu_is_kontrol.KAYIT_DEFTERI.basvur(ad, kontrol)
+        if mevcut:
+            toplu_is_kontrol.karmaya_baglan(kontrol, mevcut)
+        toplu_is_kontrol.KAYIT_DEFTERI.zorla_ekle(ad, kontrol)
+        return "ok", {}
+    durum, mevcut = toplu_is_kontrol.KAYIT_DEFTERI.basvur(ad, kontrol)
+    if durum == "ok":
+        return "ok", {}
+    if mod == "sira":
+        return "sirada", {"calisan": list(mevcut.keys())}
+    return "cakisma", {"calisan": list(mevcut.keys())}
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -165,7 +208,8 @@ CONTENT_TYPES = {
 
 def _load_auth():
     """Orijinal login modülünü (uyap_app) ve modül çekirdeklerini arka planda yükle."""
-    global _auth, _auth_err, _udf, _udf_err, _sgk, _sgk_err, _icra, _icra_err, _dosya, _dosya_err
+    global _auth, _auth_err, _udf, _udf_err, _sgk, _sgk_err, _icra, _icra_err, _dosya, _dosya_err, \
+        _barkod, _barkod_err
     try:
         import uyap_app
         _auth = uyap_app
@@ -202,6 +246,13 @@ def _load_auth():
     except Exception as e:
         _dosya_err = str(e)
         print("[web] Senkron Kapsami modulu yuklenemedi:", e)
+    try:
+        import barkod_sorgu
+        _barkod = barkod_sorgu
+        print("[web] Barkod Sorgu modulu hazir")
+    except Exception as e:
+        _barkod_err = str(e)
+        print("[web] Barkod Sorgu modulu yuklenemedi:", e)
     if _dosya is not None:
         try:
             _dosya.senkron_zamanlayici_baslat(
@@ -885,6 +936,22 @@ def dosyalarim_mahkemeler(yargi_turu, yargi_birimi_kod):
         return {"mahkemeler": []}
 
 
+def dosyalarim_taraf_secenekleri():
+    """Alacaklı/Borçlu arama kutularının açılır listesi için DB'deki mevcut
+    isimleri döner (kullanıcı isteği: serbest metnin yanında var olan
+    taraflar da seçilebilsin). Yalnız İcra (yargı türü 2) taraflarıyla
+    sınırlanır — bu kutular yalnız İcra ekranında görünür."""
+    if _dosya is None:
+        return {"alacaklilar": [], "borclular": []}
+    try:
+        return {
+            "alacaklilar": _dosya.taraf_adi_secenekleri("alacakli", _dosya.YARGI_TURU_ICRA),
+            "borclular": _dosya.taraf_adi_secenekleri("borclu", _dosya.YARGI_TURU_ICRA),
+        }
+    except Exception:
+        return {"alacaklilar": [], "borclular": []}
+
+
 def dosyalarim_list(data):
     if _dosya is None:
         return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil.", "kayitlar": []}
@@ -896,7 +963,8 @@ def dosyalarim_list(data):
     # alanlar None sayılır.
     filtreler = {k: data[k] for k in (
         "yargi_turu", "yargi_birimi_kod", "mahkeme_id", "tur_kod", "durum_kod",
-        "tarih_baslangic", "tarih_bitis", "taraf_adi") if data.get(k) not in (None, "")}
+        "tarih_baslangic", "tarih_bitis", "taraf_adi", "alacakli_adi", "borclu_adi"
+    ) if data.get(k) not in (None, "")}
     try:
         return {"ok": True, "kayitlar": _dosya.dosyalarim_db_listele(filtreler)}
     except Exception as e:
@@ -910,10 +978,30 @@ def dosyalarim_detay(data):
         "dosyaId": data.get("dosyaId", ""), "birimId": data.get("birimId", ""),
         "dosyaNo": data.get("dosyaNo", ""), "dosyaTurKod": data.get("dosyaTurKod", 0),
     }
+    # Stale-while-revalidate GERİ ALINDI (kullanıcı bulgusu, 2026-07-13):
+    # önbellekli 'ham' takibin türü/şekli/yolu için yalnız ÇIPLAK UYAP kodunu
+    # içeriyordu (ör. "1"/"0") — okunabilir '(tahmini)' metni BİLEREK DB'ye
+    # yazılmıyor (bkz. dosya_ayrinti_kaydet, UYDURULMAZ disiplini), yalnız
+    # CANLI yanıtta üretiliyor. Arka plan tazelemesi sessiz olduğundan
+    # kullanıcı bu okunabilir metni bir daha HİÇ görmüyordu — gerçek
+    # regresyon. Düzeltme netleşene kadar HER ZAMAN canlı sorgu.
     ham, aile, kaydedildi, hata, taraflar = _dosya.dosya_detay_goster_ve_kaydet(rec, lambda m: None)
     if hata:
         return {"ok": False, "msg": hata}
-    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham, "taraflar": taraflar}
+    # Barkod Sorgu'nun (Kapalı Tebligat — PTT) DB'ye yazdığı sonuçlar — masaüstü
+    # dosyalarim_genel.py._dosya_goruntule_bg'deki AYNI çağrı, web tarafında
+    # eksikti (kullanıcı bulgusu, 2026-08-04: "barkod veritabanında olan veri
+    # tüm dosyaları sorgulama ekranına gelmiyor"). DOĞAL ANAHTARLA (birim_id+
+    # dosya_no) filtrelenir — dosyaId oturuma göre değişir, bkz.
+    # tebligat_barkod_gecmisi_listele docstring'i.
+    try:
+        barkodlar = _dosya.tebligat_barkod_gecmisi_listele(
+            dosya_id=rec["dosyaId"], birim_id=rec["birimId"],
+            dosya_no=rec["dosyaNo"], dosya_tur_kod=rec["dosyaTurKod"])
+    except Exception:
+        barkodlar = []
+    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham,
+            "taraflar": taraflar, "barkodlar": barkodlar}
 
 
 def dosyalarim_yenile_baslat(token, data=None):
@@ -922,8 +1010,12 @@ def dosyalarim_yenile_baslat(token, data=None):
     onceki = DOSYALARIM_JOBS.get(token)
     if onceki and onceki["running"]:
         return {"ok": False, "msg": "Önceki yenileme sürüyor."}
-    job = DOSYALARIM_JOBS[token] = {"running": True, "logs": [], "sonuc": None}
     data = data or {}
+    kontrol = toplu_is_kontrol.TopluIsKontrolu(ad="Dosyalarım (Tümü) Yenile")
+    durum, bilgi = _toplu_is_basvur(kontrol.ad, kontrol, data)
+    if durum != "ok":
+        return {"ok": False, "cakisma": durum, **bilgi}
+    job = DOSYALARIM_JOBS[token] = {"running": True, "logs": [], "sonuc": None, "kontrol": kontrol}
     # `or None` YAZILMAZ: Ceza'nın yargi_turu kodu 0'dır — 0 falsy olduğundan
     # `or None` bunu "Tümü" sanır (kullanıcı bulgusu, 2026-07-13; bkz.
     # dosyalarim_list'teki aynı düzeltme).
@@ -939,12 +1031,15 @@ def dosyalarim_yenile_baslat(token, data=None):
     def _run():
         try:
             toplam, sonuclar = _dosya.dosyalarim_yenile(
-                _log, yargi_turu=yargi_turu, yargi_birimi_kod=yargi_birimi_kod, tum_turler=tum_turler)
+                _log, yargi_turu=yargi_turu, yargi_birimi_kod=yargi_birimi_kod,
+                tum_turler=tum_turler, kontrol=kontrol)
             job["sonuc"] = {"toplam": toplam, "sonuclar": sonuclar}
         except Exception as e:
             job["sonuc"] = {"hata": str(e)}
         finally:
             job["running"] = False
+            kontrol.karmadan_cik()
+            toplu_is_kontrol.KAYIT_DEFTERI.sil(kontrol.ad)
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True}
 
@@ -954,20 +1049,120 @@ def dosyalarim_yenile_durum(token, since_log):
     if job is None:
         return {"loaded": False}
     return {
-        "loaded": True, "running": job["running"],
+        "loaded": True, "running": job["running"], "paused": job["kontrol"].paused,
         "logs": job["logs"][since_log:], "log_n": len(job["logs"]),
         "sonuc": job["sonuc"] if not job["running"] else None,
     }
 
 
+def dosyalarim_yenile_durdur(token):
+    job = DOSYALARIM_JOBS.get(token)
+    if job:
+        job["kontrol"].durdur()
+    return {"ok": True}
+
+
+def dosyalarim_yenile_duraklat(token):
+    job = DOSYALARIM_JOBS.get(token)
+    if job:
+        return {"ok": True, "paused": job["kontrol"].toggle_pause()}
+    return {"ok": True, "paused": False}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Barkod Sorgu (Kapalı Tebligat — PTT) — masaüstü Panel/modules/barkod_sorgu_panel.py
+# ile AYNI iki bölüm: (1) dosya listesi `/api/dosyalarim/list`'in KENDİSİ
+# (yargi_turu=İcra ile) tekrar kullanılır, ayrı bir uç nokta gerekmez; (2)
+# seçilen dosyalar için sorgu (job-token'lı, dosyalarim_yenile ile AYNI desen
+# — birden çok dosya × PTT sorgusu + satır arası bekleme uzun sürebilir, tek
+# bir senkron HTTP isteğine sığdırılmaz); (3) geçmiş sonuçlar.
+# ─────────────────────────────────────────────────────────────────────────────
+BARKOD_JOBS = {}   # token -> {"running", "logs", "sonuc"}
+
+
+def barkod_gecmis():
+    if _dosya is None:
+        return {"ok": False, "msg": _dosya_err or "Modül hazır değil.", "kayitlar": []}
+    try:
+        return {"ok": True, "kayitlar": _dosya.tebligat_barkod_gecmisi_listele()}
+    except Exception as e:
+        return {"ok": False, "msg": str(e), "kayitlar": []}
+
+
+def barkod_sorgula_baslat(token, data):
+    if _barkod is None:
+        return {"ok": False, "msg": _barkod_err or "Barkod Sorgu modülü hazır değil."}
+    onceki = BARKOD_JOBS.get(token)
+    if onceki and onceki["running"]:
+        return {"ok": False, "msg": "Önceki sorgu sürüyor."}
+    secili = (data or {}).get("secili") or []
+    if not isinstance(secili, list) or not secili:
+        return {"ok": False, "msg": "Sorgulanacak dosya seçilmedi."}
+    kontrol = toplu_is_kontrol.TopluIsKontrolu(ad="Barkod Sorgulama")
+    durum, bilgi = _toplu_is_basvur(kontrol.ad, kontrol, data)
+    if durum != "ok":
+        return {"ok": False, "cakisma": durum, **bilgi}
+    job = BARKOD_JOBS[token] = {"running": True, "logs": [], "sonuc": None, "kontrol": kontrol}
+
+    def _log(m):
+        job["logs"].append(str(m))
+
+    def _run():
+        try:
+            sonuc = _barkod.calistir(list(secili), _log, kontrol=kontrol)
+            job["sonuc"] = {"n": len(sonuc) if sonuc else 0}
+        except Exception as e:
+            job["sonuc"] = {"hata": str(e)}
+        finally:
+            job["running"] = False
+            kontrol.karmadan_cik()
+            toplu_is_kontrol.KAYIT_DEFTERI.sil(kontrol.ad)
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True}
+
+
+def barkod_sorgula_durum(token, since_log):
+    job = BARKOD_JOBS.get(token)
+    if job is None:
+        return {"loaded": False}
+    return {
+        "loaded": True, "running": job["running"], "paused": job["kontrol"].paused,
+        "logs": job["logs"][since_log:], "log_n": len(job["logs"]),
+        "sonuc": job["sonuc"] if not job["running"] else None,
+    }
+
+
+def barkod_sorgula_durdur(token):
+    job = BARKOD_JOBS.get(token)
+    if job:
+        job["kontrol"].durdur()
+    return {"ok": True}
+
+
+def barkod_sorgula_duraklat(token):
+    job = BARKOD_JOBS.get(token)
+    if job:
+        return {"ok": True, "paused": job["kontrol"].toggle_pause()}
+    return {"ok": True, "paused": False}
+
+
 def _icra_birlestir(db_kayitlar, canli):
-    """DB + canlı kayıtları birim+dosyaNo ile birleştirir (masaüstü _birlestir eşi);
-    canlı taze olduğu için onu tercih eder, canlıda olmayan DB dosyalarını korur."""
+    """DB + canlı kayıtları birim+dosyaNo ile ALAN ALAN birleştirir (masaüstü
+    icra_dosyalarim._birlestir İLE AYNI, kullanıcı bulgusu 2026-08-14: canlı
+    UYAP yanıtı alacaklı/borçlu İÇERMEZ — TÜM kaydı üstüne yazmak DB'deki
+    doğru veriyi ekranda boşaltıyordu. Canlı bir alan yalnız DOLUYSA yazılır."""
     def anahtar(r):
         return (str(r.get("birimAdi", "")), str(r.get("dosyaNo", "")))
-    harita = {anahtar(r): r for r in (db_kayitlar or [])}
+    harita = {anahtar(r): dict(r) for r in (db_kayitlar or [])}
     for r in (canli or []):
-        harita[anahtar(r)] = r
+        k = anahtar(r)
+        if k in harita:
+            birlesik = harita[k]
+            for alan, deger in r.items():
+                if deger not in (None, "", []):
+                    birlesik[alan] = deger
+        else:
+            harita[k] = r
     return list(harita.values())
 
 
@@ -986,6 +1181,13 @@ class IcraJob:
         self.status = ""
         self.yeni = []        # DB'ye yeni eklenen dosyalar (bir kez bildirilir)
         self.error = ""
+        self.kontrol = toplu_is_kontrol.TopluIsKontrolu(ad="Dosya Sorgulama")
+
+    def stop(self):
+        self.kontrol.durdur()
+
+    def toggle_pause(self):
+        return self.kontrol.toggle_pause()
 
     def log(self, m):
         with self.lock:
@@ -1003,6 +1205,7 @@ class IcraJob:
         with self.lock:
             out = {
                 "loaded": True, "running": self.running, "status": self.status,
+                "paused": self.kontrol.paused,
                 "log_n": len(self.logs), "rev": self.rev, "columns": ICRA_COLUMNS,
                 "logs": self.logs[since_log:] if since_log < len(self.logs) else [],
             }
@@ -1022,6 +1225,7 @@ class IcraJob:
             self.running = True
             self.status = "Sorgulanıyor…"
             self.error = ""
+        self.kontrol.sifirla()
         threading.Thread(target=self._run, args=(values, durum_kod), daemon=True).start()
         return True
 
@@ -1039,7 +1243,7 @@ class IcraJob:
             # 2) SONRA canlı UYAP: yeni/eksik dosyaları ekle (birim+yıl+sıra ile birleştir).
             engine = _icra.IcraSorgu(self.log)
             try:
-                kayitlar, _payload, yeni = engine.ara(values, durum_kod)
+                kayitlar, _payload, yeni = engine.ara(values, durum_kod, kontrol=self.kontrol)
                 birlesik = _icra_birlestir(db_kayitlar, kayitlar)
                 self._set_rows(birlesik)
                 with self.lock:
@@ -1067,6 +1271,8 @@ class IcraJob:
         finally:
             with self.lock:
                 self.running = False
+            self.kontrol.karmadan_cik()
+            toplu_is_kontrol.KAYIT_DEFTERI.sil(self.kontrol.ad)
 
 
 def icra_job(token, create=False):
@@ -1092,7 +1298,13 @@ def icra_search(token, data):
     except (TypeError, ValueError):
         durum_kod = _icra.DURUM_VARSAYILAN
     job = icra_job(token, create=True)
+    if job.running:
+        return {"ok": False, "msg": "Önceki sorgu sürüyor."}
+    durum, bilgi = _toplu_is_basvur(job.kontrol.ad, job.kontrol, data)
+    if durum != "ok":
+        return {"ok": False, "cakisma": durum, **bilgi}
     if not job.start(values, durum_kod):
+        toplu_is_kontrol.KAYIT_DEFTERI.sil(job.kontrol.ad)
         return {"ok": False, "msg": "Önceki sorgu sürüyor."}
     return {"ok": True}
 
@@ -1113,10 +1325,20 @@ def icra_detay(token, data):
         return {"ok": False, "msg": "Seçili satır bulunamadı; listeyi yenileyin."}
     if _dosya is None:
         return {"ok": False, "msg": _dosya_err or "Senkron Kapsamı modülü hazır değil."}
+    # bkz. dosyalarim_detay'daki AYNI stale-while-revalidate geri alma gerekçesi.
     ham, aile, kaydedildi, hata, taraflar = _dosya.dosya_detay_goster_ve_kaydet(rec, job.log)
     if hata:
         return {"ok": False, "msg": hata}
-    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham, "taraflar": taraflar}
+    # bkz. dosyalarim_detay'daki AYNI barkod/tebligat ekleme gerekçesi
+    # (kullanıcı bulgusu, 2026-08-04).
+    try:
+        barkodlar = _dosya.tebligat_barkod_gecmisi_listele(
+            dosya_id=rec.get("dosyaId"), birim_id=rec.get("birimId"),
+            dosya_no=rec.get("dosyaNo"), dosya_tur_kod=rec.get("dosyaTurKod"))
+    except Exception:
+        barkodlar = []
+    return {"ok": True, "aile": aile, "kaydedildi": kaydedildi, "ham": ham,
+            "taraflar": taraflar, "barkodlar": barkodlar}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1600,9 +1822,17 @@ def _uretilmis_cell(v):
 
 def _uretilmis_sonuc(sonuc):
     """Sonucu sunum için serileştirir (masaüstü _goster_sonuc eşi): liste-sözlük →
-    tablo (kolon+satır), diğer → JSON/metin."""
+    tablo (kolon+satır), diğer → JSON/metin.
+
+    Bazı modüller (ör. barkod_sorgu) sonuç listesine `dosya_ad`/`dosya_b64`
+    öznitelikleri iliştirebilir (bkz. o modüldeki `_SonucListesi`) — bunlar
+    varsa yanıta eklenir, uretilmis.js bunu görüp bir indirme düğmesi
+    gösterir. Sıradan bir `list` bu özniteliklere sahip OLAMAZ (getattr
+    varsayılanı None döner), bu yüzden diğer modüller ETKİLENMEZ."""
     if isinstance(sonuc, dict) and sonuc.get("_hata"):
         return {"ok": False, "msg": str(sonuc.get("_hata"))}
+    dosya_ad = getattr(sonuc, "dosya_ad", None)
+    dosya_b64 = getattr(sonuc, "dosya_b64", None)
     if isinstance(sonuc, list) and sonuc and all(isinstance(x, dict) for x in sonuc):
         kolonlar = []
         for satir in sonuc:
@@ -1610,7 +1840,11 @@ def _uretilmis_sonuc(sonuc):
                 if k not in kolonlar:
                     kolonlar.append(k)
         rows = [[_uretilmis_cell(satir.get(k)) for k in kolonlar] for satir in sonuc]
-        return {"ok": True, "type": "table", "columns": kolonlar, "rows": rows, "n": len(sonuc)}
+        out = {"ok": True, "type": "table", "columns": kolonlar, "rows": rows, "n": len(sonuc)}
+        if dosya_ad and dosya_b64:
+            out["dosya_ad"] = dosya_ad
+            out["dosya_b64"] = dosya_b64
+        return out
     if isinstance(sonuc, (dict, list)):
         return {"ok": True, "type": "text",
                 "text": json.dumps(sonuc, ensure_ascii=False, indent=2, default=str)}
@@ -1640,7 +1874,15 @@ def uretilmis_spec(key):
             "parametreler": parametreler, "excel_girdi": excel_out}
 
 
-def uretilmis_run(data):
+URETILMIS_JOBS = {}   # token -> {"running", "logs", "sonuc", "kontrol"}
+
+
+def uretilmis_run_baslat(token, data):
+    """Eskiden TAM SENKRON (tek HTTP isteği bitene kadar bloke) çalışıyordu —
+    Excel/toplu modda bu, büyük listelerde isteğin dakikalarca askıda kalması
+    ve duraklat/durdur'un HİÇ mümkün olmaması demekti. Artık diğer toplu işlerle
+    (dosyalarim/barkod) AYNI iş/thread/poll deseni: hemen döner, sonuç
+    `uretilmis_run_durum` ile yoklanır."""
     key = (data.get("key") or "").strip()
     core, label = _uretilmis_core_bul(key)
     if not core:
@@ -1648,45 +1890,94 @@ def uretilmis_run(data):
     mod, err = _uretilmis_import(core)
     if mod is None:
         return {"ok": False, "msg": "Modül yüklenemedi: %s" % err}
-    logs = []
+    onceki = URETILMIS_JOBS.get(token)
+    if onceki and onceki["running"]:
+        return {"ok": False, "msg": "Önceki iş sürüyor."}
+
+    excel_girdi = getattr(mod, "EXCEL_GIRDI", None)
+    fobj = data.get("file")
+    excel_modu = bool(fobj and isinstance(excel_girdi, dict))
+
+    kontrol = toplu_is_kontrol.TopluIsKontrolu(ad=label or key)
+    if excel_modu:
+        durum, bilgi = _toplu_is_basvur(kontrol.ad, kontrol, data)
+        if durum != "ok":
+            return {"ok": False, "cakisma": durum, **bilgi}
+
+    job = URETILMIS_JOBS[token] = {"running": True, "logs": [], "sonuc": None, "kontrol": kontrol}
 
     def logfn(*a):
-        logs.append(" ".join(str(x) for x in a))
+        job["logs"].append(" ".join(str(x) for x in a))
 
-    fobj = data.get("file")
-    try:
-        if fobj and isinstance(getattr(mod, "EXCEL_GIRDI", None), dict):
-            excel = mod.EXCEL_GIRDI
-            fn = getattr(mod, excel.get("fonksiyon", "excel_isle"), None)
-            if fn is None:
-                return {"ok": False, "msg": "Modülde toplu-girdi fonksiyonu bulunamadı."}
-            filename = os.path.basename((fobj.get("filename") or "girdi").strip()) or "girdi"
-            try:
-                raw = base64.b64decode(fobj.get("data_b64") or "")
-            except Exception:
-                return {"ok": False, "msg": "Dosya verisi çözülemedi."}
-            tmpdir = tempfile.mkdtemp(prefix="uyap_uret_")
-            path = os.path.join(tmpdir, filename)
-            try:
-                with open(path, "wb") as f:
-                    f.write(raw)
-                sonuc = fn(path, log_fn=logfn)
-            finally:
+    def _run():
+        try:
+            if excel_modu:
+                excel = excel_girdi
+                fn = getattr(mod, excel.get("fonksiyon", "excel_isle"), None)
+                if fn is None:
+                    job["sonuc"] = {"ok": False, "msg": "Modülde toplu-girdi fonksiyonu bulunamadı."}
+                    return
+                filename = os.path.basename((fobj.get("filename") or "girdi").strip()) or "girdi"
                 try:
-                    os.remove(path)
+                    raw = base64.b64decode(fobj.get("data_b64") or "")
                 except Exception:
-                    pass
+                    job["sonuc"] = {"ok": False, "msg": "Dosya verisi çözülemedi."}
+                    return
+                tmpdir = tempfile.mkdtemp(prefix="uyap_uret_")
+                path = os.path.join(tmpdir, filename)
                 try:
-                    os.rmdir(tmpdir)
-                except Exception:
-                    pass
-        else:
-            sonuc = mod.calistir(dict(data.get("girdi") or {}), logfn)
-    except Exception as e:
-        return {"ok": False, "msg": str(e), "logs": logs}
-    out = _uretilmis_sonuc(sonuc)
-    out["logs"] = logs
-    return out
+                    with open(path, "wb") as f:
+                        f.write(raw)
+                    ekstra = {}
+                    if "kontrol" in inspect.signature(fn).parameters:
+                        ekstra["kontrol"] = kontrol
+                    sonuc = fn(path, log_fn=logfn, **ekstra)
+                finally:
+                    # rmtree (tek dosya silip rmdir değil): bazı modüller (ör.
+                    # barkod_sorgu) işlem sonunda aynı klasöre EK çıktı dosyası
+                    # (ör. Excel sonucu) yazabilir — tekil os.remove/os.rmdir bu
+                    # durumda "klasör boş değil" hatasıyla sessizce başarısız
+                    # olup geçici klasörü kalıcı olarak diskte bırakırdı.
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+            else:
+                sonuc = mod.calistir(dict(data.get("girdi") or {}), logfn)
+            out = _uretilmis_sonuc(sonuc)
+            out["logs"] = job["logs"]
+            job["sonuc"] = out
+        except Exception as e:
+            job["sonuc"] = {"ok": False, "msg": str(e), "logs": job["logs"]}
+        finally:
+            job["running"] = False
+            if excel_modu:
+                kontrol.karmadan_cik()
+                toplu_is_kontrol.KAYIT_DEFTERI.sil(kontrol.ad)
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True}
+
+
+def uretilmis_run_durum(token, since_log):
+    job = URETILMIS_JOBS.get(token)
+    if job is None:
+        return {"loaded": False}
+    return {
+        "loaded": True, "running": job["running"], "paused": job["kontrol"].paused,
+        "logs": job["logs"][since_log:], "log_n": len(job["logs"]),
+        "sonuc": job["sonuc"] if not job["running"] else None,
+    }
+
+
+def uretilmis_run_durdur(token):
+    job = URETILMIS_JOBS.get(token)
+    if job:
+        job["kontrol"].durdur()
+    return {"ok": True}
+
+
+def uretilmis_run_duraklat(token):
+    job = URETILMIS_JOBS.get(token)
+    if job:
+        return {"ok": True, "paused": job["kontrol"].toggle_pause()}
+    return {"ok": True, "paused": False}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1895,6 +2186,11 @@ class Handler(BaseHTTPRequestHandler):
                 yargi_turu = -1
             yargi_birimi_kod = (q.get("yargi_birimi_kod", [""])[0] or "").strip()
             self._json(200, dosyalarim_mahkemeler(yargi_turu, yargi_birimi_kod))
+        elif path == "/api/dosyalarim/taraf-secenekleri":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            self._json(200, dosyalarim_taraf_secenekleri())
         elif path == "/api/dosyalarim/yenile-durum":
             if not self._user():
                 self._json(401, {"error": "oturum yok"})
@@ -1905,6 +2201,31 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 since_log = 0
             self._json(200, dosyalarim_yenile_durum(self._token(), since_log))
+        elif path == "/api/barkod/gecmis":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            self._json(200, barkod_gecmis())
+        elif path == "/api/barkod/sorgula-durum":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                since_log = int(q.get("log", ["0"])[0])
+            except Exception:
+                since_log = 0
+            self._json(200, barkod_sorgula_durum(self._token(), since_log))
+        elif path == "/api/uretilmis/status":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                since_log = int(q.get("log", ["0"])[0])
+            except Exception:
+                since_log = 0
+            self._json(200, uretilmis_run_durum(self._token(), since_log))
         elif path == "/api/icra/status":
             if not self._user():
                 self._json(401, {"error": "oturum yok"})
@@ -2093,6 +2414,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "msg": "oturum yok"})
                 return
             self._json(200, icra_search(self._token(), self._body()))
+        elif path == "/api/icra/stop":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            job = icra_job(self._token())
+            if job:
+                job.stop()
+            self._json(200, {"ok": True})
+        elif path == "/api/icra/pause":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            job = icra_job(self._token())
+            paused = job.toggle_pause() if job else False
+            self._json(200, {"ok": True, "paused": paused})
         elif path == "/api/icra/detay":
             if not self._user():
                 self._json(401, {"ok": False, "msg": "oturum yok"})
@@ -2113,11 +2449,46 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "msg": "oturum yok"})
                 return
             self._json(200, dosyalarim_yenile_baslat(self._token(), self._body()))
+        elif path == "/api/dosyalarim/yenile-durdur":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            self._json(200, dosyalarim_yenile_durdur(self._token()))
+        elif path == "/api/dosyalarim/yenile-duraklat":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            self._json(200, dosyalarim_yenile_duraklat(self._token()))
+        elif path == "/api/barkod/sorgula":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            self._json(200, barkod_sorgula_baslat(self._token(), self._body()))
+        elif path == "/api/barkod/sorgula-durdur":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            self._json(200, barkod_sorgula_durdur(self._token()))
+        elif path == "/api/barkod/sorgula-duraklat":
+            if not self._user():
+                self._json(401, {"error": "oturum yok"})
+                return
+            self._json(200, barkod_sorgula_duraklat(self._token()))
         elif path == "/api/uretilmis/run":
             if not self._user():
                 self._json(401, {"ok": False, "msg": "oturum yok"})
                 return
-            self._json(200, uretilmis_run(self._body()))
+            self._json(200, uretilmis_run_baslat(self._token(), self._body()))
+        elif path == "/api/uretilmis/stop":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            self._json(200, uretilmis_run_durdur(self._token()))
+        elif path == "/api/uretilmis/pause":
+            if not self._user():
+                self._json(401, {"ok": False, "msg": "oturum yok"})
+                return
+            self._json(200, uretilmis_run_duraklat(self._token()))
         elif path.startswith("/api/logger/"):
             if not self._user():
                 self._json(401, {"ok": False, "msg": "oturum yok"})
@@ -2176,7 +2547,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/sgk/start":
                 data = self._body()
                 secili = data.get("selected") or None
+                durum, bilgi = _toplu_is_basvur(batch.kontrol.ad, batch.kontrol, data)
+                if durum != "ok":
+                    self._json(200, {"ok": False, "cakisma": durum, **bilgi})
+                    return
                 ok = batch.start(data.get("mode") or "normal", secili)
+                if not ok:
+                    toplu_is_kontrol.KAYIT_DEFTERI.sil(batch.kontrol.ad)
                 self._json(200, {"ok": ok})
             elif path == "/api/sgk/stop":
                 batch.stop()

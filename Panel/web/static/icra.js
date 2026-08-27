@@ -9,13 +9,19 @@
   if (!sorgulaBtn) return;
   var temizleBtn = $("icra-temizle"), statusEl = $("icra-status"), sayacEl = $("icra-sayac");
   var detayBtn = $("icra-detay");
+  var pauseBtn = $("icra-pause"), stopBtn = $("icra-stop");
   var durumSel = $("icra-durum"), headEl = $("icra-head"), filterRow = $("icra-filter-row"),
       bodyEl = $("icra-body"), logEl = $("icra-log");
 
   var columns = [];        // [{key,label}]
   var rows = [];           // [[değer...], ...] sunucudan
   var filters = {};        // colKey -> filtre kutusu <input>
-  var sinceLog = 0, sinceRev = 0, running = false, ready = false, polling = false;
+  var sinceLog = 0, sinceRev = 0, running = false, paused = false, ready = false, polling = false;
+
+  function setControls() {
+    if (pauseBtn) { pauseBtn.disabled = !running; pauseBtn.textContent = paused ? "Devam" : "Duraklat"; }
+    if (stopBtn) stopBtn.disabled = !running;
+  }
   var selectedIdx = -1;    // "Dosya Görüntüle" için seçili satırın rows[] içindeki (HAM, filtrelenmemiş) sırası
 
   // Türkçe-duyarsız küçük harf (icra_core.tr_lower eşi) — canlı filtre eşleşmesi için.
@@ -151,6 +157,32 @@
         taraflar.forEach(function (t) {
           var satir = "  " + (t.rol || "") + ": " + (t.adi || "");
           if (t.vekil) satir += " — Vekil: " + t.vekil.replace(/^\[|\]$/g, "");
+          // Kesinleşme/Tebliğ Durumu (kullanıcı bulgusu, 2026-08-04: Barkod
+          // Sorgu ile hesaplanan bu veri Dosya Görüntüle'de hiç görünmüyordu)
+          // — yalnız borçlu satırlarında dolu olur, bkz.
+          // dosya_core._taraflar_kesinlesme_bilgisi_ekle.
+          if (t.kesinlesmeDurumu) satir += " — Kesinleşme: " + t.kesinlesmeDurumu;
+          if (t.tebligatDurumu) satir += " — Tebliğ: " + t.tebligatDurumu;
+          satirlar.push(satir);
+        });
+      }
+      // Barkod Sorgu (Kapalı Tebligat — PTT) modülünün DB'ye yazdığı gerçek
+      // sonuçlar — masaüstü dosyalarim_genel.py._barkod_sekmesi'nin web eşi
+      // (kullanıcı bulgusu, 2026-08-04: "barkod veritabanında olan veri tüm
+      // dosyaları sorgulama ekranına gelmiyor" — bu, DosyaTaraf.tebligatDurumu
+      // enum'undan AYRI bir veri kaynağıdır, o enum hiçbir zaman otomatik
+      // doldurulmuyor). En yeniden eskiye.
+      var barkodlar = d.barkodlar || [];
+      if (barkodlar.length) {
+        satirlar.push("");
+        satirlar.push("Barkod / Tebligat Bilgileri:");
+        barkodlar.forEach(function (b) {
+          var satir = "  " + (b.evrakAciklama || "—") + " — Barkod: " + (b.barkod || "—") +
+            " — PTT Durumu: " + (b.pttDurumu || "—");
+          if (b.sonIslemTarihi) satir += " (" + b.sonIslemTarihi + ")";
+          satir += " — Tebliğ Mazbatası: " + (b.tebligMazbatasiVar || "—");
+          if (b.kapaliTebligMazbatasiVar === "Var") satir += ", Kapalı Mazbata: Var";
+          if (b.sorguZamani) satir += " — Sorgu: " + b.sorguZamani;
           satirlar.push(satir);
         });
       }
@@ -192,11 +224,26 @@
       body[c.key] = filters[c.key] ? filters[c.key].value.trim() : "";
     });
     statusEl.textContent = "● Sorgulanıyor…";
-    post("api/icra/search", body).then(function (d) {
-      if (!d.ok) { statusEl.textContent = ""; log("[HATA] " + (d.msg || "başlatılamadı")); return; }
-      running = true; ensurePoll();
+    window.topluIs.baslat(function (extra) {
+      var b = {}; for (var k in body) b[k] = body[k]; for (var k2 in extra) b[k2] = extra[k2];
+      return post("api/icra/search", b);
+    }, function (t) { statusEl.textContent = "● " + t; }).then(function (d) {
+      if (!d.ok) { if (!d.cakisma) { statusEl.textContent = ""; log("[HATA] " + (d.msg || "başlatılamadı")); } return; }
+      running = true; setControls(); ensurePoll();
     }).catch(function (e) { statusEl.textContent = ""; log("[HATA] " + e); });
   }
+
+  function duraklatToggle() {
+    if (!running) return;
+    post("api/icra/pause").then(function (d) { paused = !!d.paused; setControls(); });
+  }
+
+  function durdur() {
+    if (running) post("api/icra/stop");
+  }
+
+  if (pauseBtn) pauseBtn.addEventListener("click", duraklatToggle);
+  if (stopBtn) stopBtn.addEventListener("click", durdur);
 
   function temizle() {
     durumSel.selectedIndex = 0;
@@ -232,7 +279,7 @@
           var liste = s.yeni.map(function (y) { return "- " + y.dosya_no + " (" + y.birim_adi + ")"; }).join("\n");
           log("Veritabanına " + s.yeni.length + " yeni dosya eklendi:\n" + liste);
         }
-        running = !!s.running;
+        running = !!s.running; paused = !!s.paused; setControls();
         if (!running) { polling = false; return; }   // iş bitti → polling durur
         setTimeout(poll, 1000);
       })

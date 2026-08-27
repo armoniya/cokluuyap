@@ -22,6 +22,7 @@ Payload alan adları kullanıcının gerçek UYAP isteklerinden yakalandı:
 """
 
 import os
+import re as _re
 import sys
 
 # Orijinal SGK modülünü import yoluna ekle — aktarımı (transport) ondan alacağız.
@@ -82,6 +83,24 @@ def tr_lower(s):
                  ("ö", "o"), ("Ç", "c"), ("ç", "c")):
         s = s.replace(a, b)
     return s.lower()
+
+
+_TARIH_SIRALAMA_RE = _re.compile(r"^(\d{2})\.(\d{2})\.(\d{4})$")
+
+
+def tarih_siralama_anahtari(deger):
+    """'GG.AA.YYYY' -> sıralanabilir 'YYYYAAGG'. Ayrıştırılamazsa None döner.
+    Kullanıcı bulgusu (2026-08-14): "Açılış Tarihi" gibi tarih sütunları düz
+    METİN olarak sıralanınca GÜN basamağı öne geldiği için kronolojik sıra
+    YANLIŞ çıkıyordu (ör. "01.03.2026" metin-sırasında "15.01.2026"dan önce
+    gelir, oysa Ocak Mart'tan ÖNCEDİR) — bkz. dosyalarim_genel.py
+    _ACILIS_TARIHI_RE ile AYNI mantık, o ekranda zaten düzeltilmişti, burada
+    (İcra Dosyalarım) EKSİKTİ."""
+    m = _TARIH_SIRALAMA_RE.match(str(deger or "").strip())
+    if not m:
+        return None
+    gg, aa, yyyy = m.groups()
+    return f"{yyyy}{aa}{gg}"
 
 
 def birim_listesi_getir(log_fn=None, zorla=False):
@@ -207,9 +226,36 @@ def db_dosyalari_getir(values, durum_kod=0):   # 0 = Açık (DURUM_VARSAYILAN)
     tur = (values.get("dosyaTur") or "").strip()
     if tur:
         qs = qs.filter(tur__icontains=tur)
+    # ALACAKLI/BORÇLU sütun filtresi (kullanıcı bulgusu, 2026-08-14: "sütunlarda
+    # filtreleme yapsam bile Sorgula'ya basınca o daireki TÜM dosyaları
+    # sorguluyor") — bu fonksiyon eskiden yalnız birim/yıl/dosyaNo/tür'e bakıp
+    # taraf adı metnini TAMAMEN YOK SAYIYORDU (dosyalarim_db_listele'nin AYNI
+    # işi doğru yaptığı halde). Aşağıda dosya_core._taraf_isim_eslesir İLE AYNI
+    # (Türkçe-duyarlı, C-locale ILIKE sorununu atlayan) Python-taraflı eşleşme
+    # kullanılır — DB seviyesinde icontains YAZILMAZ (aynı gerekçe).
+    alacakli_l = tr_lower((values.get("alacakli") or "").strip())
+    borclu_l = tr_lower((values.get("borclu") or "").strip())
+    try:
+        import dosya_core as _dc2
+        _eslesir = _dc2._taraf_isim_eslesir
+    except Exception:
+        _eslesir = None
     out = []
-    for d in qs.order_by("-yil", "-sira_no")[:8000]:
+    # ÖNEMLİ (kullanıcı bulgusu, 2026-08-14): eskiden burada [:8000] sabit bir
+    # kesme vardı — portföy bu sayıyı geçince (bkz. dosyalarim_db_listele'nin
+    # AYNI SINIRLAMAYA sahip OLMADIĞI, kullanıcının "Tüm Dosyalarım"da görüp
+    # "İcra Dosyalarım"da GÖREMEDİĞİ tam da bu yüzdendi) en düşük dosyaNo'lu
+    # (ör. yeni açılan banka dosyaları, sıra no'su küçük ofislerde) kayıtlar
+    # SESSİZCE listeden düşüyordu — kesme, "en yeni açılan" değil "en yüksek
+    # dosyaNo'lu" kayıtları koruyordu. dosyalarim_db_listele ile TUTARLI olsun
+    # diye kesme kaldırıldı.
+    for d in qs.order_by("-yil", "-sira_no"):
         baglar = list(d.taraf_baglari.all())
+        if _eslesir is not None:
+            if alacakli_l and not any(b.rol == "alacakli" and _eslesir(b.taraf, alacakli_l) for b in baglar):
+                continue
+            if borclu_l and not any(b.rol == "borclu" and _eslesir(b.taraf, borclu_l) for b in baglar):
+                continue
         alac = [str(b.taraf) for b in baglar if b.rol == "alacakli"]
         borc = [str(b.taraf) for b in baglar if b.rol == "borclu"]
         out.append({
@@ -220,7 +266,26 @@ def db_dosyalari_getir(values, durum_kod=0):   # 0 = Açık (DURUM_VARSAYILAN)
             "alacakli": ", ".join(alac),
             "borclu": ", ".join(borc),
             "dosyaAcilisTarihi": d.acilis_tarihi,
+            # Kesinleşme Durumu — dosyalarim_db_listele ile AYNI türetme (borçlu
+            # bazlı, virgülle birleştirilmiş). Tebliğ Durumu ise AŞAĞIDA
+            # _dosya_barkod_ozetlerini_ekle ile (dosya_core'dan, TEK kaynak)
+            # eklenir — kullanıcı isteği (2026-08-14): bu iki sütun "Tüm
+            # Dosyalarım"da DEĞİL "İcra Dosyalarım"da görünsün.
+            "kesinlesme_durumu": ", ".join(
+                dt.get_kesinlesme_durumu_display() for dt in baglar
+                if dt.rol == "borclu" and dt.kesinlesme_durumu),
         })
+    try:
+        # DÜZ import (relative DEĞİL) — bkz. dosya_core.py'nin "import icra_core
+        # as _ic" ile AYNI yönde yaptığı gibi: icra_core.py çoğu zaman sys.path
+        # üzerinden DÜZ modül olarak yüklenir (barkod_sorgu.py, teblig_21_2_core.py
+        # vb. hep "import icra_core" der, "from . import" DEĞİL) — bu dosyada bir
+        # "from . import" kullanmak o bağlamlarda ImportError'a yol açardı.
+        import dosya_core as _dc
+        _dc._dosya_barkod_ozetlerini_ekle(out)
+    except Exception:
+        for r in out:
+            r.setdefault("tebligat_durumu", "")
     return out
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -237,10 +302,16 @@ FIELDS = [
     {"key": "acilisTarihi",           "label": "Açılış Tarihi",       "group": "Tarih", "type": "date", "pkey": "acilisTarihi", "default": True,  "ph": "GG.AA.YYYY"},
     {"key": "dosyaAcilisTarihiStart", "label": "Açılış Başlangıç",     "group": "Tarih", "type": "date", "pkey": "dosyaAcilisTarihiStart", "default": False, "ph": "GG.AA.YYYY"},
     {"key": "dosyaAcilisTarihiEnd",   "label": "Açılış Bitiş",         "group": "Tarih", "type": "date", "pkey": "dosyaAcilisTarihiEnd",   "default": False, "ph": "GG.AA.YYYY"},
+    # Kullanıcı isteği (2026-08-14): bu iki sütun "Tüm Dosyalarım"da DEĞİL
+    # "İcra Dosyalarım"da görünsün — YALNIZCA yerel DB'den (db_dosyalari_getir)
+    # doldurulur, UYAP'a canlı arama parametresi olarak GÖNDERİLMEZ (build_payload
+    # bu key'leri bilmiyor, bilerek — UYAP'ta böyle bir arama alanı YOK).
+    {"key": "kesinlesme_durumu",      "label": "Kesinleşme Durumu",   "group": "Durum", "type": "text", "pkey": None, "default": True,  "ph": ""},
+    {"key": "tebligat_durumu",        "label": "Tebliğ Durumu",       "group": "Durum", "type": "text", "pkey": None, "default": True,  "ph": ""},
 ]
 FIELD_BY_KEY = {f["key"]: f for f in FIELDS}
 DEFAULT_ACTIVE = [f["key"] for f in FIELDS if f["default"]]
-GROUPS = ["Taraf", "Dosya", "Tarih"]
+GROUPS = ["Taraf", "Dosya", "Tarih", "Durum"]
 
 # Dosya durumu -> payload "dosyaDurumKod" (kullanıcının yakaladığı isteklerden):
 #   Açık = 0, Kapalı = 1.
@@ -601,13 +672,17 @@ class IcraSorgu:
     def __init__(self, log_fn=None):
         self.log_fn = log_fn or (lambda m: None)
 
-    def ara(self, values, durum_kod=DURUM_VARSAYILAN):
+    def ara(self, values, durum_kod=DURUM_VARSAYILAN, kontrol=None):
         """Döner: (kayitlar:list[dict], payload:dict, yeni_dosyalar:list[dict]). Hata olursa istisna yükselir
         (OturumHatasi veya genel).
 
         UYAP sayfa başına en çok PAGE_SIZE (500) kayıt döndürür. Dosya sayısı
         500'ü aşarsa kalan sayfalar pageNumber artırılarak çekilir ve hepsi tek
-        listede birleştirilir; böylece sonuç 500'de kapanmaz."""
+        listede birleştirilir; böylece sonuç 500'de kapanmaz.
+
+        `kontrol` verilirse (toplu_is_kontrol.TopluIsKontrolu), her sayfa ve her
+        dosya-detayı çekiminden önce duraklat/durdur/karma kontrol noktasından
+        geçilir; durdurulduysa o ana kadar toplanan sonuçla erken döner."""
         motor = SorguMotoru(self.log_fn)
         # Birim adını sunucu-taraflı filtreye çevirebilmek için birim listesini
         # hazırla (önbellekli; yalnız ilk sorguda UYAP'a gider).
@@ -642,6 +717,9 @@ class IcraSorgu:
         for variant in variantlar:
             sayfa = 1
             while True:
+                if kontrol and not kontrol.nokta():
+                    self.log_fn("⏹ Durduruldu.")
+                    return tum, son_payload, []
                 payload = build_payload(values, durum_kod, variant)
                 payload["pageNumber"] = sayfa
                 son_payload = payload
@@ -654,6 +732,8 @@ class IcraSorgu:
                     if did:
                         gorulen.add(did)
                     tum.append(rec)
+                if kontrol:
+                    kontrol.tur_bitti()
                 if len(kayitlar) < PAGE_SIZE:      # son (eksik) sayfa -> bitti
                     break
                 sayfa += 1
@@ -688,6 +768,11 @@ class IcraSorgu:
         yeni_dosyalar = []
 
         for rec in tum:
+            if kontrol:
+                kontrol.tur_bitti()
+                if not kontrol.nokta():
+                    self.log_fn("⏹ Durduruldu.")
+                    break
             dosya_id = rec.get("dosyaId")
             if not dosya_id:
                 continue

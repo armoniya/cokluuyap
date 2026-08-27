@@ -28,6 +28,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from theme import C, RoundButton
 from . import is_kuyrugu
+from . import takip_sonuc_raporu
 
 
 # ── uyap_core (ofis çekirdeği) importu için yol ekle ─────────────────────────
@@ -63,19 +64,38 @@ class MtsTakipPanel:
         self.vekalet_map = {}           # {alacakli: dosya_yolu}
         self.dayanak_map = {}           # {dosya_no: dosya_yolu}
         self.secili = set()             # açılacak takiplerin dosya_no'ları
+        # Ödeme/tebligat, takip-açma modundan (tam otomatik/toplu/tek tek) BAĞIMSIZ,
+        # HER DOSYA için ayrı ayrı işaretlenir (bkz. kullanıcı talebi 2026-08-11) — Bekleyen
+        # listesindeki 💳/📨 kutularıyla. Varsayılan: ödeme işaretli (canlı doğrulandı),
+        # tebligat işaretsiz (mükerrer ücretlendirme filtresi izole test bekliyor).
+        self.odeme_secili = set()       # ödeme yapılacak dosya_no'lar
+        self.tebligat_secili = set()    # tebligat gönderilecek dosya_no'lar
         self.durum = {}                 # dosya_no -> bekleyen/aktif/tamam/hata/atlandi
         self.hata_mesaj = {}            # dosya_no -> hata nedeni
         self.secili_dosya_no = None
+        self._bekleyen_sira_yon = None  # None | "artan" | "azalan" — "Takip" başlığı tıklamasıyla değişir
 
         self.job_id = None
         self._calisiyor = False
         self._poll_after = None
+        self._excel_job_id = None
+        self._excel_calisiyor = False
+        self._tebligat_job_id = None
+        self._tebligat_calisiyor = False
+        self._tebligat_log_sayac = 0
         self._log_sayac = 0             # işlenen log satırı sayısı (artımlı)
         self._onay_aktif = False        # şu an bir onay isteği ekranda mı
+        self._son_sonuc = {}            # son biten işin job.result'ı (Excel'e Aktar için)
 
         self._mod_var = tk.StringVar(value="yok")
         self._il_var = tk.StringVar(value="İzmir")
         self._adliye_var = tk.StringVar(value="İzmir")
+        # Takip AÇILDIKTAN SONRAKİ iki ayrı aşama (ödeme/tebligat) — HANGİ dosyalarda
+        # yapılacağı Bekleyen listesindeki 💳/📨 kutularıyla HER DOSYA için ayrı seçilir
+        # (self.odeme_secili/self.tebligat_secili); burdaki iki mod, işaretli dosyalar için
+        # onayın NASIL alınacağını belirler (bkz. job_handlers._coklu_takip_ac).
+        self._odeme_mod_var = tk.StringVar(value="yok")
+        self._tebligat_mod_var = tk.StringVar(value="yok")
 
         self._init_style()
         self._build()
@@ -181,6 +201,42 @@ class MtsTakipPanel:
                                 cursor="hand2")
             rb.pack(side="left", padx=(0, 18))
 
+        # Ödeme & Tebligat (takip AÇILDIKTAN SONRA, ayrı onay turlarıyla). HANGİ dosyalarda
+        # yapılacağı — çalışma modundan (tam otomatik/toplu/tek tek) BAĞIMSIZ olarak — sağdaki
+        # Bekleyen listesinde HER DOSYA için ayrı 💳/📨 kutusuyla işaretlenir; buradaki iki mod
+        # yalnız işaretlenen dosyalarda onayın NASIL alınacağını belirler. Reddedilen/işaretsiz
+        # dosya bir önceki durumda (açık / ödenmiş) kalır, UYAP'tan elle ilerletilebilir.
+        tk.Label(ic, text="ÖDEME VE TEBLİGAT ONAY BİÇİMİ", bg=C.CARD,
+                 fg=C.INK_SOFT, font=self.app.f_nav_b).pack(anchor="w", pady=(6, 0))
+        tk.Label(ic, text="Hangi dosyalarda yapılacağını Bekleyen listesindeki 💳/📨 "
+                          "kutularıyla işaretleyin — buradaki seçim yalnız NASIL onaylanacağını belirler.",
+                bg=C.CARD, fg=C.INK_FAINT, font=self.app.f_small,
+                wraplength=520, justify="left").pack(anchor="w")
+        ot_satir = tk.Frame(ic, bg=C.CARD)
+        ot_satir.pack(fill="x", pady=(4, 10))
+
+        odeme_col = tk.Frame(ot_satir, bg=C.CARD)
+        odeme_col.pack(side="left", padx=(0, 32), anchor="n")
+        tk.Label(odeme_col, text="💳 Ödeme", bg=C.CARD, fg=C.INK,
+                font=self.app.f_body).pack(anchor="w")
+        for deger, etiket in (("yok", "Onaysız (işaretliyse hemen öde)"), ("tek_tek", "Her dosyada onayla"),
+                             ("toplu", "Toplu önizle, tek onay")):
+            tk.Radiobutton(odeme_col, text=etiket, variable=self._odeme_mod_var, value=deger,
+                          bg=C.CARD, fg=C.INK_SOFT, selectcolor=C.CARD, activebackground=C.CARD,
+                          activeforeground=C.INK, font=self.app.f_small, bd=0,
+                          highlightthickness=0, cursor="hand2").pack(anchor="w", padx=(18, 0))
+
+        tebligat_col = tk.Frame(ot_satir, bg=C.CARD)
+        tebligat_col.pack(side="left", anchor="n")
+        tk.Label(tebligat_col, text="📨 Tebligat", bg=C.CARD, fg=C.INK,
+                font=self.app.f_body).pack(anchor="w")
+        for deger, etiket in (("yok", "Onaysız (işaretliyse hemen gönder)"), ("tek_tek", "Her dosyada onayla"),
+                             ("toplu", "Toplu önizle, tek onay")):
+            tk.Radiobutton(tebligat_col, text=etiket, variable=self._tebligat_mod_var, value=deger,
+                          bg=C.CARD, fg=C.INK_SOFT, selectcolor=C.CARD, activebackground=C.CARD,
+                          activeforeground=C.INK, font=self.app.f_small, bd=0,
+                          highlightthickness=0, cursor="hand2").pack(anchor="w", padx=(18, 0))
+
         # İl / Adliye + dayanak
         alt = tk.Frame(ic, bg=C.CARD)
         alt.pack(fill="x")
@@ -278,14 +334,29 @@ class MtsTakipPanel:
                     font=self.app.f_small, height=28).pack(side="left")
         RoundButton(secbar, "☐ Hiçbiri", command=self._hicbiri, kind="ghost",
                     font=self.app.f_small, height=28).pack(side="left", padx=(6, 0))
+        # 💳/📨 sütunlarını hızlı toplu işaretlemek için — satır satır tıklamak yerine.
+        odetebbar = tk.Frame(k1, bg=C.CARD)
+        odetebbar.pack(fill="x", padx=12, pady=(4, 0))
+        RoundButton(odetebbar, "💳 Tümü", command=lambda: self._odeme_teb_toplu("odeme", True),
+                    kind="ghost", font=self.app.f_small, height=26).pack(side="left")
+        RoundButton(odetebbar, "💳 Hiçbiri", command=lambda: self._odeme_teb_toplu("odeme", False),
+                    kind="ghost", font=self.app.f_small, height=26).pack(side="left", padx=(4, 10))
+        RoundButton(odetebbar, "📨 Tümü", command=lambda: self._odeme_teb_toplu("tebligat", True),
+                    kind="ghost", font=self.app.f_small, height=26).pack(side="left")
+        RoundButton(odetebbar, "📨 Hiçbiri", command=lambda: self._odeme_teb_toplu("tebligat", False),
+                    kind="ghost", font=self.app.f_small, height=26).pack(side="left", padx=(4, 0))
         cer1 = tk.Frame(k1, bg=C.CARD)
         cer1.pack(fill="both", expand=True, padx=12, pady=(6, 12))
-        self.bekleyen_tv = ttk.Treeview(cer1, columns=("sec", "ad"), show="headings",
+        self.bekleyen_tv = ttk.Treeview(cer1, columns=("sec", "ode", "teb", "ad"), show="headings",
                                        height=7, selectmode="browse", style="Mts.Treeview")
-        self.bekleyen_tv.heading("sec", text="✓")
-        self.bekleyen_tv.heading("ad", text="Takip")
-        self.bekleyen_tv.column("sec", width=30, anchor="center", stretch=False)
-        self.bekleyen_tv.column("ad", width=240, anchor="w")
+        self.bekleyen_tv.heading("sec", text="Aç")
+        self.bekleyen_tv.heading("ode", text="💳")
+        self.bekleyen_tv.heading("teb", text="📨")
+        self.bekleyen_tv.heading("ad", text="Takip", command=self._bekleyen_basligi_tikla)
+        self.bekleyen_tv.column("sec", width=32, anchor="center", stretch=False)
+        self.bekleyen_tv.column("ode", width=32, anchor="center", stretch=False)
+        self.bekleyen_tv.column("teb", width=32, anchor="center", stretch=False)
+        self.bekleyen_tv.column("ad", width=220, anchor="w")
         self.bekleyen_tv.tag_configure("aktif", foreground=C.CLAY)
         self.bekleyen_tv.pack(side="left", fill="both", expand=True)
         sb1 = tk.Scrollbar(cer1, command=self.bekleyen_tv.yview)
@@ -302,6 +373,16 @@ class MtsTakipPanel:
         self.acilan_baslik.pack(anchor="w", padx=12, pady=(12, 0))
         tk.Label(k2, text="Açıldıkça/atlandıkça buraya geçer.", bg=C.CARD, fg=C.INK_FAINT,
                  font=self.app.f_small).pack(anchor="w", padx=12)
+        acbar = tk.Frame(k2, bg=C.CARD)
+        acbar.pack(fill="x", padx=12, pady=(4, 0))
+        self.excel_btn = RoundButton(
+            acbar, "📊 Ödenenleri Excel'e Aktar", command=self._excel_aktar,
+            kind="ghost", font=self.app.f_small, height=28)
+        self.excel_btn.pack(side="left")
+        self.tebligat_btn = RoundButton(
+            acbar, "📨 Tebligat Gönder (Test)", command=self._tebligat_gonder_test,
+            kind="ghost", font=self.app.f_small, height=28)
+        self.tebligat_btn.pack(side="left", padx=(6, 0))
         cer2 = tk.Frame(k2, bg=C.CARD)
         cer2.pack(fill="both", expand=True, padx=12, pady=(6, 12))
         self.acilan_tv = ttk.Treeview(cer2, columns=("durum", "ad"), show="headings",
@@ -380,6 +461,9 @@ class MtsTakipPanel:
                  font=self.app.f_nav_b).pack(side="left")
         RoundButton(bas, "Temizle", command=self._log_temizle, kind="ghost",
                     font=self.app.f_small, height=28).pack(side="right")
+        RoundButton(bas, "📊  Bu Çalışmanın Sonucunu Excel'e Aktar",
+                    command=self._sonuclari_excel_aktar, kind="ghost",
+                    font=self.app.f_small, height=28).pack(side="right", padx=(0, 8))
         cer = tk.Frame(kart, bg="#FBFAF7")
         cer.pack(fill="both", expand=True, padx=12, pady=(6, 12))
         self.log = tk.Text(cer, bg="#FBFAF7", fg=C.INK, relief="flat",
@@ -403,6 +487,25 @@ class MtsTakipPanel:
         self.log.config(state="normal")
         self.log.delete("1.0", "end")
         self.log.config(state="disabled")
+
+    def _sonuclari_excel_aktar(self):
+        sonuc = self._son_sonuc or {}
+
+        def _borclu(s):
+            t = self._takip_bul(s.get("dosya_no"))
+            return self._borclu_metni(t) if t else ""
+
+        kolonlar = [
+            ("Dosya No", "dosya_no"),
+            ("Borçlu", _borclu),
+            ("Durum", "durum"),
+            ("Esas No", "gercek_dosya_no"),
+            ("Dosya ID", "dosya_id"),
+            ("Hata", lambda s: s.get("mesaj") or s.get("odeme_hata") or s.get("tebligat_hata") or ""),
+        ]
+        takip_sonuc_raporu.sonuclari_excel_yaz(
+            self._log_yaz, sonuc.get("sonuclar") or [], kolonlar,
+            "mts_takip_sonuclari.xlsx", sheet_title="MTS Takip Sonuçları")
 
     def _durum_yaz(self, metin):
         if self.durum_lbl.winfo_exists():
@@ -481,6 +584,10 @@ class MtsTakipPanel:
         self.durum = {str(t.dosya_no): "bekleyen" for t in takipler}
         self.hata_mesaj = {}
         self.secili = set(str(t.dosya_no) for t in takipler)   # varsayılan: hepsi seçili
+        # Ödeme varsayılan İŞARETLİ (canlı doğrulandı), tebligat varsayılan İŞARETSİZ (bkz.
+        # __init__ notu) — kullanıcı Bekleyen listesinden dosya bazında değiştirebilir.
+        self.odeme_secili = set(str(t.dosya_no) for t in takipler)
+        self.tebligat_secili = set()
         self.kaynak_lbl.config(text=os.path.basename(yol))
         self.ozet_lbl.config(text=f"{len(takipler)} takip · {len(gor)} alacaklı")
         self._log_yaz(f"✓ {len(takipler)} takip ayrıştırıldı ({os.path.basename(yol)}).")
@@ -502,6 +609,8 @@ class MtsTakipPanel:
         self.vekalet_map = {}
         self.dayanak_map = {}
         self.secili = set()
+        self.odeme_secili = set()
+        self.tebligat_secili = set()
         self.durum = {}
         self.hata_mesaj = {}
         self.kaynak_lbl.config(text="Henüz dosya seçilmedi.")
@@ -660,15 +769,24 @@ class MtsTakipPanel:
         self.bekleyen_tv.delete(*self.bekleyen_tv.get_children())
         bekleyen = [t for t in self.takipler
                     if self.durum.get(str(t.dosya_no), "bekleyen") in ("bekleyen", "aktif")]
+        if self._bekleyen_sira_yon:
+            bekleyen.sort(key=lambda t: self._borclu_metni(t, kisa=True).lower(),
+                          reverse=(self._bekleyen_sira_yon == "azalan"))
         for t in bekleyen:
             dn = str(t.dosya_no)
             isaret = "☑" if dn in self.secili else "☐"
+            ode_isaret = "☑" if dn in self.odeme_secili else "☐"
+            teb_isaret = "☑" if dn in self.tebligat_secili else "☐"
             tag = "aktif" if self.durum.get(dn) == "aktif" else ""
-            etiket = f" {self._borclu_metni(t, kisa=True)}  ·  Dosya {dn}"
-            self.bekleyen_tv.insert("", "end", iid=dn, values=(isaret, etiket),
+            abone = (t.hizmet_abone_no or "").strip()
+            abone_kismi = f" (Abone: {abone})" if abone else ""
+            etiket = f" {self._borclu_metni(t, kisa=True)}{abone_kismi}  ·  Dosya {dn}"
+            self.bekleyen_tv.insert("", "end", iid=dn, values=(isaret, ode_isaret, teb_isaret, etiket),
                                     tags=(tag,) if tag else ())
         sec_say = sum(1 for t in bekleyen if str(t.dosya_no) in self.secili)
         self.bekleyen_baslik.config(text=f"⏳  Bekleyen ({len(bekleyen)}) — ☑ {sec_say}")
+        ok = {"artan": " ▲", "azalan": " ▼"}.get(self._bekleyen_sira_yon, "")
+        self.bekleyen_tv.heading("ad", text="Takip" + ok)
 
     def _acilan_ciz(self):
         self.acilan_tv.delete(*self.acilan_tv.get_children())
@@ -698,15 +816,30 @@ class MtsTakipPanel:
         row = self.bekleyen_tv.identify_row(event.y)
         if not row:
             return
-        if self.bekleyen_tv.identify_column(event.x) != "#1":
+        kolon = self.bekleyen_tv.identify_column(event.x)
+        hedef = {"#1": self.secili, "#2": self.odeme_secili, "#3": self.tebligat_secili}.get(kolon)
+        if hedef is None:
             return
-        if row in self.secili:
-            self.secili.discard(row)
+        if row in hedef:
+            hedef.discard(row)
         else:
-            self.secili.add(row)
+            hedef.add(row)
         self._bekleyen_ciz()
         self._butonlar_guncelle()
         return "break"
+
+    def _odeme_teb_toplu(self, hangi, isaretle):
+        """💳/📨 sütununu bekleyen listedeki TÜM dosyalar için tek seferde işaretler/kaldırır."""
+        if self._calisiyor:
+            return
+        hedef = self.odeme_secili if hangi == "odeme" else self.tebligat_secili
+        bekleyen_no = [str(t.dosya_no) for t in self.takipler
+                      if self.durum.get(str(t.dosya_no), "bekleyen") in ("bekleyen", "aktif")]
+        if isaretle:
+            hedef.update(bekleyen_no)
+        else:
+            hedef.difference_update(bekleyen_no)
+        self._bekleyen_ciz()
 
     def _bekleyen_secildi(self, _e=None):
         sec = self.bekleyen_tv.selection()
@@ -735,6 +868,11 @@ class MtsTakipPanel:
         self.secili.clear()
         self._bekleyen_ciz()
         self._butonlar_guncelle()
+
+    def _bekleyen_basligi_tikla(self):
+        """'Takip' başlığına tıklanınca alfabetik sıralamayı A-Z / Z-A arasında değiştirir."""
+        self._bekleyen_sira_yon = "azalan" if self._bekleyen_sira_yon == "artan" else "artan"
+        self._bekleyen_ciz()
 
     # ─────────────────────────────────────────────────────── detay
     def _detay_goster(self, dosya_no):
@@ -782,6 +920,224 @@ class MtsTakipPanel:
             self.durdur_btn.set_state("disabled")
             self.sec_btn.set_state("normal")
             self.kaldir_btn.set_state("normal")
+        self.excel_btn.set_state(
+            "normal" if (var and not self._calisiyor and not self._excel_calisiyor) else "disabled")
+        self.tebligat_btn.set_state(
+            "normal" if (var and not self._calisiyor and not self._tebligat_calisiyor) else "disabled")
+
+    # ─────────────────────────────────────────────────────── ödenenleri Excel'e aktar
+    def _excel_aktar(self):
+        """UYAP'ın 'Tamamlanmayan Dosyalar' ekranını sorgulayıp (yalnız okuma —
+        hiçbir ödeme/gönderim yapılmaz), o anda gerçek esas no almış (yani UYAP'ta
+        ödemesi tamamlanmış) takipleri Ad Soyad / Ürün No / Dosya No sütunlarıyla
+        Excel'e yazar. MTS akışında harç ödemesi otomatik olmadığından ödeme UYAP'ta
+        elle yapılmalı; bu buton yalnızca SONUCU raporlar."""
+        if self._calisiyor or self._excel_calisiyor:
+            return
+        if not self.takipler:
+            messagebox.showinfo("Excel'e Aktar", "Önce bir XML/Excel seçin.")
+            return
+
+        self._excel_calisiyor = True
+        self._butonlar_guncelle()
+        self._durum_yaz("Ödeme durumu UYAP'tan sorgulanıyor…")
+        self._log_yaz("\n📊 Ödenenleri Excel'e Aktar: UYAP 'Tamamlanmayan Dosyalar' "
+                      "listesi sorgulanıyor…")
+        takipler = list(self.takipler)
+
+        def isi():
+            try:
+                _uyap_core_ekle()
+                from uyap_core.mts.models import takipler_to_params
+                params = {"takipler": takipler_to_params(takipler)}
+                job = is_kuyrugu.is_baslat("mts_odenmis_dosyalari_bul", params)
+                self.app.after(0, lambda: self._excel_is_basladi(job))
+            except Exception as e:
+                self.app.after(0, lambda e=e: self._excel_hata(e))
+        threading.Thread(target=isi, daemon=True).start()
+
+    def _excel_hata(self, e):
+        self._excel_calisiyor = False
+        self._butonlar_guncelle()
+        self._durum_yaz("")
+        self._log_yaz(f"❌ Excel'e aktarma başlatılamadı: {e}")
+        messagebox.showerror("Excel'e Aktar", str(e))
+
+    def _excel_is_basladi(self, job):
+        self._excel_job_id = job.get("id")
+        self._excel_poll()
+
+    def _excel_poll(self):
+        if not self._excel_job_id:
+            return
+        jid = self._excel_job_id
+
+        def isi():
+            try:
+                job = is_kuyrugu.is_durum(jid)
+                self.app.after(0, lambda: self._excel_poll_isle(job))
+            except Exception as e:
+                self.app.after(0, lambda e=e: self._excel_poll_hata(e))
+        threading.Thread(target=isi, daemon=True).start()
+
+    def _excel_poll_hata(self, e):
+        self._log_yaz(f"⚠️ Excel sorgusu — durum alınamadı: {e}")
+        if self._excel_calisiyor:
+            self.app.after(2000, self._excel_poll)
+
+    def _excel_poll_isle(self, job):
+        if job.get("status") in ("done", "error", "cancelled"):
+            self._excel_bitti(job)
+            return
+        if self._excel_calisiyor:
+            self.app.after(900, self._excel_poll)
+
+    def _excel_bitti(self, job):
+        self._excel_calisiyor = False
+        self._excel_job_id = None
+        self._butonlar_guncelle()
+        self._durum_yaz("")
+
+        if job.get("status") != "done":
+            self._log_yaz(f"❌ Excel sorgusu başarısız: {job.get('error') or 'bilinmeyen hata'}")
+            messagebox.showerror("Excel'e Aktar", job.get("error") or "Sorgu başarısız.")
+            return
+
+        sonuc = job.get("result") or {}
+        satirlar = []
+        for s in (sonuc.get("sonuclar") or []):
+            gercek_no = s.get("gercek_dosya_no")
+            if not gercek_no:
+                continue
+            t = self._takip_bul(s.get("dosya_no"))
+            if t is None:
+                continue
+            urun_no = t.abone_no or t.hizmet_abone_no or "-"
+            satirlar.append((self._borclu_metni(t), urun_no, gercek_no))
+
+        self._log_yaz(f"📊 {len(satirlar)}/{len(self.takipler)} takip ödenmiş bulundu "
+                      "(gerçek esas no atanmış).")
+        if not satirlar:
+            messagebox.showinfo(
+                "Excel'e Aktar",
+                "Ödemesi tamamlanmış (gerçek esas no atanmış) takip bulunamadı.\n\n"
+                "MTS'te harç ödemesi otomatik yapılmıyor — UYAP'ta 'Tamamlanmayan "
+                "Dosyalar' ekranından elle ödedikten sonra tekrar deneyin.")
+            return
+
+        yol = filedialog.asksaveasfilename(
+            title="Excel'i kaydet", defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")], initialfile="mts_odenen_takipler.xlsx")
+        if not yol:
+            return
+        try:
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Ödenen Takipler"
+            ws.append(["Ad Soyad", "Ürün Numarası", "Dosya Numarası"])
+            for satir in satirlar:
+                ws.append(list(satir))
+            for col, genislik in zip("ABC", (32, 20, 18)):
+                ws.column_dimensions[col].width = genislik
+            wb.save(yol)
+        except Exception as e:
+            self._log_yaz(f"❌ Excel yazılamadı: {e}")
+            messagebox.showerror("Excel'e Aktar", str(e))
+            return
+        self._log_yaz(f"✓ Excel kaydedildi: {yol}")
+        messagebox.showinfo("Excel'e Aktar", f"{len(satirlar)} kayıt yazıldı:\n{yol}")
+
+    # ─────────────────────────────────────────────────────── tebligat gönder (test/kurtarma)
+    def _tebligat_gonder_test(self):
+        """Sağdaki 'Açılan' listesinden seçili TEK dosyaya, mts_tebligat_gonder işiyle
+        (job_handlers.py) tebligat gönderir. TEBLIGAT_GONDER_AKTIF bayrağını etkilemez —
+        yalnız izole test/kurtarma amaçlıdır. Dosyanın harcının UYAP'ta zaten ÖDENMİŞ
+        olması gerekir; job dosya_id'yi borçlu ad-soyadıyla kendisi bulur."""
+        if self._calisiyor or self._excel_calisiyor or self._tebligat_calisiyor:
+            return
+        dn = self.secili_dosya_no
+        t = self._takip_bul(dn) if dn else None
+        if t is None:
+            messagebox.showinfo("Tebligat Gönder (Test)",
+                                "Önce sağdaki 'Açılan' listesinden, harcı UYAP'ta zaten "
+                                "ödenmiş bir dosya seçin.")
+            return
+        borclu = self._borclu_metni(t)
+        if not messagebox.askyesno(
+                "Tebligat Gönder (Test)",
+                f"'{borclu}' borçlusuna ait dosyaya GERÇEK tebligat gönderilecek ve "
+                "e-Barobirlik karttan GERÇEK ücret (~317 TL) tahsil edilecek.\n\n"
+                "Bu dosyanın harcının UYAP'ta ÖDENMİŞ olduğundan emin misiniz?\n\n"
+                "Devam edilsin mi?"):
+            return
+
+        self._tebligat_calisiyor = True
+        self._tebligat_log_sayac = 0
+        self._butonlar_guncelle()
+        self._log_yaz(f"\n📨 Tebligat Gönder (Test): [{dn}] {borclu} için deneniyor...")
+
+        def isi():
+            try:
+                _uyap_core_ekle()
+                from uyap_core.mts.models import takipler_to_params
+                params = {"takip": takipler_to_params([t])[0]}
+                job = is_kuyrugu.is_baslat("mts_tebligat_gonder", params)
+                self.app.after(0, lambda: self._tebligat_is_basladi(job))
+            except Exception as e:
+                self.app.after(0, lambda e=e: self._tebligat_hata(e))
+        threading.Thread(target=isi, daemon=True).start()
+
+    def _tebligat_hata(self, e):
+        self._tebligat_calisiyor = False
+        self._butonlar_guncelle()
+        self._log_yaz(f"❌ Tebligat işi başlatılamadı: {e}")
+        messagebox.showerror("Tebligat Gönder (Test)", str(e))
+
+    def _tebligat_is_basladi(self, job):
+        self._tebligat_job_id = job.get("id")
+        self._log_yaz(f"   job id: {self._tebligat_job_id}")
+        self._tebligat_poll()
+
+    def _tebligat_poll(self):
+        if not self._tebligat_job_id:
+            return
+        jid = self._tebligat_job_id
+
+        def isi():
+            try:
+                job = is_kuyrugu.is_durum(jid)
+                self.app.after(0, lambda: self._tebligat_poll_isle(job))
+            except Exception as e:
+                self.app.after(0, lambda e=e: self._tebligat_poll_hata(e))
+        threading.Thread(target=isi, daemon=True).start()
+
+    def _tebligat_poll_hata(self, e):
+        self._log_yaz(f"⚠️ Tebligat işi — durum alınamadı: {e}")
+        if self._tebligat_calisiyor:
+            self.app.after(2000, self._tebligat_poll)
+
+    def _tebligat_poll_isle(self, job):
+        for satir in (job.get("logs") or [])[self._tebligat_log_sayac:]:
+            self._log_yaz(f"   {satir.get('line', satir)}")
+        self._tebligat_log_sayac = len(job.get("logs") or [])
+        if job.get("status") in ("done", "error", "cancelled"):
+            self._tebligat_bitti(job)
+            return
+        if self._tebligat_calisiyor:
+            self.app.after(900, self._tebligat_poll)
+
+    def _tebligat_bitti(self, job):
+        self._tebligat_calisiyor = False
+        self._tebligat_job_id = None
+        self._butonlar_guncelle()
+        if job.get("status") != "done":
+            self._log_yaz(f"❌ Tebligat gönderimi başarısız: {job.get('error') or 'bilinmeyen hata'}")
+            messagebox.showerror("Tebligat Gönder (Test)", job.get("error") or "İş başarısız.")
+            return
+        sonuc = job.get("result") or {}
+        self._log_yaz(f"✓ Tebligat sonucu: {sonuc}")
+        messagebox.showinfo("Tebligat Gönder (Test)", f"Tamamlandı:\n\n{sonuc}")
 
     # ─────────────────────────────────────────────────────── belge → base64
     def _belge_b64(self, yol):
@@ -817,6 +1173,14 @@ class MtsTakipPanel:
         il = self._il_var.get().strip() or "İzmir"
         adliye = self._adliye_var.get().strip() or "İzmir"
         onay_modu = self._mod_var.get()
+        odeme_onay_modu = self._odeme_mod_var.get()
+        tebligat_onay_modu = self._tebligat_mod_var.get()
+        # Ödeme/tebligat HER DOSYA için ayrı: Bekleyen listesindeki 💳/📨 kutularıyla
+        # işaretlenmiş dosya_no'ların haritası (bkz. __init__ notu) — bu koşuda işlenecek
+        # takiplerle sınırlanır (henüz açılmayacak bir dosyanın işareti burada anlamsız).
+        odeme_yap = {str(t.dosya_no): str(t.dosya_no) in self.odeme_secili for t in secili_takipler}
+        tebligat_gonder = {str(t.dosya_no): str(t.dosya_no) in self.tebligat_secili
+                           for t in secili_takipler}
 
         # Belgeleri base64'le (vekalet alacaklıya, dayanak dosya_no'ya göre)
         try:
@@ -839,6 +1203,8 @@ class MtsTakipPanel:
         params = {
             "takipler": takipler_to_params(secili_takipler),
             "il": il, "adliye": adliye, "onay_modu": onay_modu,
+            "odeme_yap": odeme_yap, "odeme_onay_modu": odeme_onay_modu,
+            "tebligat_gonder": tebligat_gonder, "tebligat_onay_modu": tebligat_onay_modu,
             "vekalet": vekalet, "dayanak": dayanak,
         }
 
@@ -936,6 +1302,7 @@ class MtsTakipPanel:
         self._onay_gizle()
         status = job.get("status")
         sonuc = job.get("result") or {}
+        self._son_sonuc = sonuc
         if status == "done":
             self._durum_yaz(
                 f"Bitti: {sonuc.get('basari', 0)} tamam, {sonuc.get('atlanan', 0)} atlandı, "
@@ -985,9 +1352,44 @@ class MtsTakipPanel:
             self._onay_btn("✓ Seçilenleri Aç",
                            lambda: self._onay_ver({"selection": list(self.secili)}), "primary")
             self._onay_btn("⏹ Durdur", lambda: self._onay_ver({"decision": "cancel"}), "stop")
+        elif mod == "odeme_tek_tek":
+            kalem = pending.get("kalem") or {}
+            self.onay_mesaj.config(text=self._harc_metni(kalem) + "\nBu dosyanın harcı ödensin mi?")
+            self._onay_btn("✓ Öde", lambda: self._onay_ver({"decision": "approve"}), "primary")
+            self._onay_btn("⤼ Bu Dosyayı Atla", lambda: self._onay_ver({"decision": "skip"}), "ghost")
+            self._onay_btn("⏹ Kalanları Durdur", lambda: self._onay_ver({"decision": "cancel"}), "stop")
+        elif mod == "odeme_toplu":
+            kalemler = pending.get("kalemler") or []
+            toplam = sum((k.get("toplam_harc") or 0) for k in kalemler)
+            self.onay_mesaj.config(
+                text=f"{len(kalemler)} dosya ödeme onayı bekliyor (toplam ~{toplam:.2f} TL). "
+                     "Aşağıdan seçin.")
+            self._onay_btn("✓ Detaylı Seç…",
+                           lambda: self._toplu_kalem_dialog("Ödeme Onayı", kalemler, self._harc_satiri),
+                           "primary")
+            self._onay_btn("⏭ Hiçbirini Ödeme", lambda: self._onay_ver({"selection": []}), "ghost")
+            self._onay_btn("⏹ Kalanları Durdur", lambda: self._onay_ver({"decision": "cancel"}), "stop")
+        elif mod == "tebligat_tek_tek":
+            kalem = pending.get("kalem") or {}
+            self.onay_mesaj.config(text=self._tebligat_metni(kalem) + "\nBu dosyaya tebligat gönderilsin mi?")
+            self._onay_btn("✓ Gönder", lambda: self._onay_ver({"decision": "approve"}), "primary")
+            self._onay_btn("⤼ Bu Dosyayı Atla", lambda: self._onay_ver({"decision": "skip"}), "ghost")
+            self._onay_btn("⏹ Kalanları Durdur", lambda: self._onay_ver({"decision": "cancel"}), "stop")
+        elif mod == "tebligat_toplu":
+            kalemler = pending.get("kalemler") or []
+            self.onay_mesaj.config(
+                text=f"{len(kalemler)} dosya tebligat onayı bekliyor. Aşağıdan seçin.")
+            self._onay_btn("✓ Detaylı Seç…",
+                           lambda: self._toplu_kalem_dialog("Tebligat Onayı", kalemler, self._tebligat_satiri),
+                           "primary")
+            self._onay_btn("⏭ Hiçbirine Gönderme", lambda: self._onay_ver({"selection": []}), "ghost")
+            self._onay_btn("⏹ Kalanları Durdur", lambda: self._onay_ver({"decision": "cancel"}), "stop")
         else:
-            # Bilinmeyen mod: körlemesine onayla
-            self._onay_ver({"decision": "approve"})
+            # Bilinmeyen mod: körlemesine onaylamak yerine işi GÜVENLİ tarafta durdur —
+            # tanınmayan bir onay turunu sessizce approve etmek (ör. para harcayan bir
+            # aşamada) kullanıcının hiç görmediği bir işlemi onaylamış olur.
+            self._log_yaz(f"⚠️ Bilinmeyen onay türü ({mod}) — güvenlik için iş durduruluyor.")
+            self._onay_ver({"decision": "cancel"})
             return
         try:
             self.onay_bar.pack(fill="x", pady=(14, 0))
@@ -1001,6 +1403,70 @@ class MtsTakipPanel:
         return (f"Dosya {ozet.get('dosya_no')} · {ozet.get('alacakli','')}\n"
                 f"Borçlu: {borc}  ·  Toplam: {ozet.get('toplam','-')} TL"
                 + (f"\nMasraf: {harc}" if harc else ""))
+
+    def _harc_metni(self, kalem):
+        harc = "; ".join(f"{h.get('ad')}: {h.get('miktar')} TL" for h in (kalem.get("harclar") or []))
+        return (f"Dosya {kalem.get('dosya_no')} · {kalem.get('alacakli','')}\n"
+                f"Harç: {harc or '-'}  ·  Toplam: {kalem.get('toplam_harc', 0)} TL")
+
+    def _harc_satiri(self, kalem):
+        return (f"Dosya {kalem.get('dosya_no')} · {kalem.get('alacakli','')} · "
+                f"Harç toplamı {kalem.get('toplam_harc', 0)} TL")
+
+    def _tebligat_metni(self, kalem):
+        borc = ", ".join(f"{b.get('ad','')} {b.get('soyad','')}".strip()
+                         for b in (kalem.get("borclular") or [])) or "-"
+        return f"Dosya {kalem.get('dosya_no')} · {kalem.get('alacakli','')}\nTaraflar: {borc}"
+
+    def _tebligat_satiri(self, kalem):
+        return (f"Dosya {kalem.get('dosya_no')} · {kalem.get('alacakli','')} · "
+                f"{len(kalem.get('borclular') or [])} taraf")
+
+    def _toplu_kalem_dialog(self, baslik, kalemler, satir_fn):
+        """Ödeme/tebligat toplu onayı: her kalem için ayrı ☑ ile seçim yapılan küçük pencere.
+        Reddedilen kalem yalnız BU AŞAMAYI atlar — bir önceki aşamada zaten gerçekleşmiş
+        (dosya açık / ödenmiş) hiçbir şey geri alınmaz."""
+        win = tk.Toplevel(self.parent)
+        win.title(baslik)
+        win.configure(bg=C.BG)
+        win.geometry("520x480")
+        win.transient(self.parent)
+        tk.Label(win, text=f"{baslik} — {len(kalemler)} dosya", bg=C.BG, fg=C.INK,
+                font=self.app.f_nav_b).pack(anchor="w", padx=14, pady=(14, 6))
+
+        govde = tk.Frame(win, bg=C.CARD, highlightbackground=C.CARD_EDGE, highlightthickness=1)
+        govde.pack(fill="both", expand=True, padx=14)
+        canvas = tk.Canvas(govde, bg=C.CARD, highlightthickness=0)
+        sb = ttk.Scrollbar(govde, orient="vertical", command=canvas.yview)
+        ic = tk.Frame(canvas, bg=C.CARD)
+        ic.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=ic, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        secimler = {}
+        for k in kalemler:
+            dn = str(k.get("dosya_no"))
+            var = tk.BooleanVar(value=True)
+            secimler[dn] = var
+            tk.Checkbutton(ic, text=satir_fn(k), variable=var, bg=C.CARD, fg=C.INK,
+                          selectcolor=C.CARD, activebackground=C.CARD, activeforeground=C.INK,
+                          font=self.app.f_body, bd=0, highlightthickness=0,
+                          cursor="hand2", anchor="w", justify="left").pack(anchor="w", fill="x", pady=1)
+
+        alt = tk.Frame(win, bg=C.BG)
+        alt.pack(fill="x", padx=14, pady=10)
+
+        def gonder():
+            secili = [dn for dn, v in secimler.items() if v.get()]
+            win.destroy()
+            self._onay_ver({"selection": secili})
+
+        RoundButton(alt, "✓ Seçilenlerle Devam Et", command=gonder, kind="primary",
+                   font=self.app.f_nav_b, height=34).pack(side="right")
+        RoundButton(alt, "Vazgeç (tümü işaretli kalsın)", command=win.destroy, kind="ghost",
+                   font=self.app.f_nav_b, height=34).pack(side="right", padx=(0, 8))
 
     def _onay_btn(self, metin, komut, kind):
         b = RoundButton(self.onay_btn_cer, metin, command=komut, kind=kind,

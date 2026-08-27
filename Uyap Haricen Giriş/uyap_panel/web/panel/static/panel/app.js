@@ -157,6 +157,12 @@ document.querySelectorAll('[data-role="start"]').forEach(btn=>{
       adliye: el(kind,"adliye").value.trim(),
       onay_modu: panelOf(kind).querySelector(`input[name="onay-${kind}"]:checked`).value,
     };
+    if(kind === "mts"){
+      body.odeme_aktif = el(kind,"odeme-aktif").checked;
+      body.odeme_onay_modu = panelOf(kind).querySelector('input[name="odeme-onay-mts"]:checked').value;
+      body.tebligat_aktif = el(kind,"tebligat-aktif").checked;
+      body.tebligat_onay_modu = panelOf(kind).querySelector('input[name="tebligat-onay-mts"]:checked').value;
+    }
     btn.disabled = true;
     el(kind,"status").textContent = "İş gönderiliyor…";
     el(kind,"bar").style.width = "0%";
@@ -251,9 +257,60 @@ function btn(label, cls, fn){
   b.className = "btn " + cls; b.textContent = label; b.onclick = fn; return b;
 }
 
+function harcMetni(kalem){
+  let s = [`DOSYA NO   : ${kalem.dosya_no??""}`, `ALACAKLI   : ${kalem.alacakli??""}`, "-".repeat(40), "HARÇ/MASRAF:"];
+  (kalem.harclar||[]).forEach(h=>s.push(`  · ${h.ad??""}: ${h.miktar??0} TL`));
+  s.push("-".repeat(40), `TOPLAM     : ${kalem.toplam_harc??0} TL`);
+  return s.join("\n");
+}
+function tebligatMetni(kalem){
+  let s = [`DOSYA NO   : ${kalem.dosya_no??""}`, `ALACAKLI   : ${kalem.alacakli??""}`, "-".repeat(40), "TARAFLAR:"];
+  (kalem.borclular||[]).forEach((b,i)=>s.push(`  ${i+1}. ${b.ad??""} ${b.soyad??""}`));
+  return s.join("\n");
+}
+
+// Tek-tek onay: her kalem için "Atla"/"Onayla" — reddedilen yalnız BU AŞAMAYI atlar,
+// bir önceki aşamada zaten gerçekleşmiş olan (dosya açık / ödenmiş) hiçbir şey geri alınmaz.
+function tekTekModal(kind, title, metinFn, kalem){
+  modalTitle.textContent = title;
+  const pre = document.createElement("pre"); pre.textContent = metinFn(kalem);
+  modalBody.appendChild(pre);
+  modalFooter.appendChild(btn("Tümünü İptal Et (kalanları durdur)","danger",()=>sendApproval(kind,"cancel")));
+  const right = document.createElement("div");
+  right.appendChild(btn("Bu Dosyayı Atla","ghost",()=>sendApproval(kind,"skip")));
+  const ok = btn("Onayla","ok",()=>sendApproval(kind,"approve")); ok.style.marginLeft="8px";
+  right.appendChild(ok);
+  modalFooter.appendChild(right);
+}
+
+// Toplu onay: tüm kalemler önizlenir, devam edecekler seçilir. reject={label,fn}: sol
+// (danger) buton — takip-açmada GERÇEK iptaldir (henüz hiçbir şey oluşmadı); ödeme/tebligat
+// aşamasında yalnız "bu aşamayı hiç kimseye uygulama" anlamına gelir (bkz. çağıran yorumlar)
+// — bir önceki aşamada zaten gerçekleşmiş olan (dosya açık/ödenmiş) hiçbir şey geri alınmaz.
+function topluModal(kind, title, satirFn, kalemler, reject){
+  modalTitle.textContent = title;
+  const boxes = [];
+  kalemler.forEach(o=>{
+    const dn = String(o.dosya_no);
+    const line = document.createElement("label"); line.className="checkline";
+    const cb = document.createElement("input"); cb.type="checkbox"; cb.checked=true; cb.value=dn;
+    boxes.push(cb);
+    line.appendChild(cb);
+    const sp = document.createElement("span"); sp.textContent = satirFn(o);
+    line.appendChild(sp);
+    modalBody.appendChild(line);
+  });
+  modalFooter.appendChild(btn(reject.label,"danger",reject.fn));
+  modalFooter.appendChild(btn("Seçilenlerle Devam Et","ok",()=>{
+    const sel = boxes.filter(b=>b.checked).map(b=>b.value);
+    sendApproval(kind,"approve",sel);
+  }));
+}
+
 function showApproval(kind, pending){
   modalBg.classList.add("show");
-  if(pending.mod === "tek_tek"){
+  const mod = pending.mod;
+  if(mod === "tek_tek"){
     const o = pending.takip || {};
     modalTitle.textContent = `Takip onayı — Dosya No: ${o.dosya_no??""}`;
     const pre = document.createElement("pre"); pre.textContent = ozetMetni(o);
@@ -264,26 +321,30 @@ function showApproval(kind, pending){
     const ok = btn("Onayla ve Aç","ok",()=>sendApproval(kind,"approve")); ok.style.marginLeft="8px";
     right.appendChild(ok);
     modalFooter.appendChild(right);
-  }else{ // toplu
+  }else if(mod === "toplu"){
     const list = pending.takipler || [];
-    modalTitle.textContent = `Toplu önizleme — ${list.length} takip. Açılacakları seçin:`;
-    const boxes = [];
-    list.forEach(o=>{
-      const dn = String(o.dosya_no);
-      const line = document.createElement("label"); line.className="checkline";
-      const cb = document.createElement("input"); cb.type="checkbox"; cb.checked=true; cb.value=dn;
-      boxes.push(cb);
-      line.appendChild(cb);
-      const sp = document.createElement("span");
-      sp.textContent = `Dosya ${dn} · ${o.alacakli||""} · ${(o.borclular||[]).length} borçlu · Toplam ${o.toplam||0} TL`;
-      line.appendChild(sp);
-      modalBody.appendChild(line);
-    });
-    modalFooter.appendChild(btn("Tümünü İptal Et","danger",()=>sendApproval(kind,"cancel")));
-    modalFooter.appendChild(btn("Seçilenleri Aç","ok",()=>{
-      const sel = boxes.filter(b=>b.checked).map(b=>b.value);
-      sendApproval(kind,"approve",sel);
-    }));
+    // Takip-açmada henüz hiçbir şey OLUŞMADIĞI için sol buton GERÇEK iptaldir.
+    topluModal(kind, `Toplu önizleme — ${list.length} takip. Açılacakları seçin:`,
+      o=>`Dosya ${o.dosya_no} · ${o.alacakli||""} · ${(o.borclular||[]).length} borçlu · Toplam ${o.toplam||0} TL`,
+      list, {label:"Tümünü İptal Et", fn:()=>sendApproval(kind,"cancel")});
+  }else if(mod === "odeme_tek_tek"){
+    tekTekModal(kind, `Ödeme onayı — Dosya No: ${(pending.kalem||{}).dosya_no??""}`, harcMetni, pending.kalem||{});
+  }else if(mod === "odeme_toplu"){
+    const list = pending.kalemler || [];
+    topluModal(kind, `Toplu ödeme önizleme — ${list.length} dosya. Ödenecekleri seçin:`,
+      o=>`Dosya ${o.dosya_no} · ${o.alacakli||""} · Harç toplamı ${o.toplam_harc||0} TL`,
+      list, {label:"Hiçbirini Ödeme", fn:()=>sendApproval(kind,"approve",[])});
+  }else if(mod === "tebligat_tek_tek"){
+    tekTekModal(kind, `Tebligat onayı — Dosya No: ${(pending.kalem||{}).dosya_no??""}`, tebligatMetni, pending.kalem||{});
+  }else if(mod === "tebligat_toplu"){
+    const list = pending.kalemler || [];
+    topluModal(kind, `Toplu tebligat önizleme — ${list.length} dosya. Gönderilecekleri seçin:`,
+      o=>`Dosya ${o.dosya_no} · ${o.alacakli||""} · ${(o.borclular||[]).length} taraf`,
+      list, {label:"Hiçbirine Gönderme", fn:()=>sendApproval(kind,"approve",[])});
+  }else{
+    modalTitle.textContent = "Onay bekleniyor";
+    modalBody.textContent = "Bilinmeyen onay türü: " + mod;
+    modalFooter.appendChild(btn("Kapat","ghost",()=>sendApproval(kind,"cancel")));
   }
 }
 

@@ -20,7 +20,9 @@ Alanlar OPSİYONEL, tek tek açılıp kapatılır; tercih kaydedilir
 açık değilse sorgu ofis proxy'sine ulaşamaz.
 """
 
+import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -28,6 +30,15 @@ from tkinter import ttk
 from theme import C, RoundButton
 from . import icra_core
 from . import dosya_core
+
+# BARE (paket-göreli DEĞİL) — toplu_is_kontrol/toplu_is_dialog'un TÜM
+# tüketicilerde AYNI tekil (KAYIT_DEFTERI) nesneyi görmesi için şart: bu iki
+# modül HER YERDE bare import edilir (bkz. toplu_is_kontrol.py başlığı).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import toplu_is_kontrol  # noqa: E402
+import toplu_is_dialog as _tid  # noqa: E402
 
 
 class IcraDosyalarimPanel:
@@ -39,6 +50,7 @@ class IcraDosyalarimPanel:
         self.parent = parent
         self.app = app
         self.engine = icra_core.IcraSorgu(self._log)
+        self.kontrol = toplu_is_kontrol.TopluIsKontrolu(ad="Dosya Sorgulama")
 
         self.vars = {f["key"]: tk.StringVar() for f in icra_core.FIELDS}
         self.combos = {}           # key -> ttk.Combobox (tablo başlığındaki kutular)
@@ -63,6 +75,12 @@ class IcraDosyalarimPanel:
         self.columns = []          # tablo kolonları = aktif alanlar (tarih hariç)
         self.sort_key = None
         self.sort_reverse = False
+        # Son çalıştırılan sorgunun kriterleri — "Dosya Görüntüle" bir kayıt
+        # kaydettiğinde (bkz. _detay_goster) tabloyu AYNI kriterlerle DB'den
+        # tazelemek için (kullanıcı bulgusu: dosyalarim_genel.py'deki eşi
+        # 2026-07-12'de düzeltilmişti, bu ekrana hiç taşınmamıştı).
+        self._son_degerler = {}
+        self._son_durum_kod = icra_core.DURUM_VARSAYILAN
 
         self.result_q = queue.Queue()
         self._logbuf = []
@@ -76,6 +94,31 @@ class IcraDosyalarimPanel:
         threading.Thread(target=self._birim_listesi_yukle_bg, daemon=True).start()
         # Panel açılır açılmaz eldeki DB kayıtlarını göster (UYAP beklemeden).
         threading.Thread(target=self._acilista_db_yukle_bg, daemon=True).start()
+        self.app.after(20000, self._oto_yenile_dongusu)
+
+    def _oto_yenile_dongusu(self):
+        """20 sn'de bir mevcut filtreyle YEREL veritabanını sessizce yeniden
+        okur (UYAP'a GİTMEZ) — kullanıcı isteği (2026-08-14): bir modülde
+        yapılan güncelleme diğerinde ELLE Sorgula'ya basmadan görünsün. Canlı
+        bir Sorgula SÜRERKEN (self.running) araya girmez ("db_acilis" işleyicisi
+        zaten aynı korumayı bir kez daha uygular)."""
+        if not self.running:
+            values = {k: v.get() for k, v in self.vars.items()}
+            durum_kod = self._durum_kod.get(self.durum_var.get(), icra_core.DURUM_VARSAYILAN)
+            threading.Thread(target=self._oto_yenile_bg, args=(values, durum_kod), daemon=True).start()
+        self.app.after(20000, self._oto_yenile_dongusu)
+
+    def _oto_yenile_bg(self, values, durum_kod):
+        try:
+            kayitlar = icra_core.db_dosyalari_getir(values, durum_kod)
+        except Exception:
+            return
+        # db_dosyalari_getir HATA durumunda da [] döner (bkz. kendi try/except'i)
+        # — burada BOŞ sonucu göndermiyoruz ki geçici bir DB kesintisi ekrandaki
+        # DOLU tabloyu SESSİZCE boşaltmasın (kullanıcı bulgusu, 2026-08-14:
+        # "var olan veri gitti" — bkz. _birlestir düzeltmesiyle AYNI endişe).
+        if kayitlar:
+            self.result_q.put(("db_acilis", kayitlar))
 
     # ─────────────────────────── tercih kalıcı ───────────────────────────
     def _auth(self):
@@ -90,6 +133,15 @@ class IcraDosyalarimPanel:
                 if isinstance(kayitli, list):
                     gecerli = icra_core.gecerli_alanlar(kayitli)
                     if gecerli:
+                        # YENİ eklenen varsayılan sütunlar (ör. kesinlesme_durumu/
+                        # tebligat_durumu, 2026-08-14) eski KAYDEDİLMİŞ tercihte
+                        # yoksa burada eklenir — yoksa "FIELDS'e ekledim" YETMEZ,
+                        # daha önce bu ekranda kolon seçimini özelleştirmiş
+                        # kullanıcı yeni varsayılan sütunları HİÇ GÖRMEZ (kayıtlı
+                        # tercih eskiyi aynen korur, yeniyi bilmez).
+                        for k in icra_core.DEFAULT_ACTIVE:
+                            if k not in gecerli:
+                                gecerli.append(k)
                         return gecerli
             except Exception:
                 pass
@@ -107,8 +159,13 @@ class IcraDosyalarimPanel:
             pass
 
     def _kolonlar(self):
-        """Tablo kolonları = sabit 7 kolon (Dosya Türü = Esas/Talimat dahil)."""
-        return ['alacakli', 'borclu', 'birimAdi', 'dosyaYil', 'dosyaNo', 'dosyaTur', 'acilisTarihi']
+        """Tablo kolonları = kullanıcının seçtiği alanlar (self.active — "Alanları
+        Düzenle" checkbox'larından, bkz. _edit_degisti). ÖNCEDEN burada sabit 7
+        kolonluk bir liste vardı (kullanıcı bulgusu, 2026-08-14: "Kesinleşme/
+        Tebliğ Durumu'nu İcra Dosyalarım'a eklememişsin" — FIELDS'e eklenmiş
+        olmaları YETMİYORDU, çünkü tablo self.active'i HİÇ OKUMUYORDU; "Alanları
+        Düzenle" checkbox'ları da bu YÜZDEN görünüşte hiçbir şey değiştirmiyordu)."""
+        return [k for k in self.active if k not in self.DATE_KEYS]
 
     # ─────────────────────────── ttk stilleri ───────────────────────────
     def _init_style(self):
@@ -178,6 +235,12 @@ class IcraDosyalarimPanel:
         bar.pack(fill="x", pady=(12, 0))
         self.sorgula_btn = self._btn(bar, "Sorgula", self.sorgula, "primary")
         self.sorgula_btn.pack(side="left", ipadx=6)
+        self.duraklat_btn = self._btn(bar, "Duraklat", self.duraklat_toggle, "ghost")
+        self.duraklat_btn.pack(side="left", padx=(8, 0), ipadx=2)
+        self.duraklat_btn.set_state("disabled")
+        self.durdur_btn = self._btn(bar, "Durdur", self.durdur, "ghost")
+        self.durdur_btn.pack(side="left", padx=(8, 0), ipadx=2)
+        self.durdur_btn.set_state("disabled")
         self._btn(bar, "Temizle", self.temizle, "ghost").pack(side="left", padx=(8, 0), ipadx=2)
         self.edit_btn = self._btn(bar, "Alanları Düzenle", self.edit_toggle, "ghost")
         self.edit_btn.pack(side="left", padx=(8, 0), ipadx=2)
@@ -460,6 +523,8 @@ class IcraDosyalarimPanel:
             return 150
         if "tckimlik" in c or "mersis" in c or "vergi" in c:
             return 150
+        if c in ("tebligat_durumu", "kesinlesme_durumu"):
+            return 200
         return 120
 
     def _kriterler(self):
@@ -483,13 +548,32 @@ class IcraDosyalarimPanel:
                 return True
             kayitlar = [r for r in kayitlar if uyar(r)]
         if self.sort_key:
-            def anahtar(r):
+            # dosyalarim_genel.py'deki AYNI disiplin (2026-08-14, kullanıcı
+            # bulgusu: burada tarih sütunları METİN olarak sıralanıp GÜN
+            # basamağına göre karışıyordu — bkz. icra_core.tarih_siralama_
+            # anahtari). Ayrıca geçersiz/boş değerler HER İKİ yönde de SONA
+            # sabitlenir (o ekrandaki AYNI düzeltme, kullanıcı bulgusu
+            # 2026-07-13: reverse=True'da eskiden başa zıplıyordu).
+            tarih_mi = (icra_core.FIELD_BY_KEY.get(self.sort_key) or {}).get("type") == "date"
+
+            def anahtar_bul(r):
                 v = icra_core.kolon_degeri(r, self.sort_key)
+                if tarih_mi:
+                    k = icra_core.tarih_siralama_anahtari(v)
+                    return k
+                if not v:
+                    return None
                 try:
                     return (0, float(v.replace(",", ".")))
                 except (ValueError, AttributeError):
                     return (1, v.lower())
-            kayitlar = sorted(kayitlar, key=anahtar, reverse=self.sort_reverse)
+
+            gecerliler, gecersizler = [], []
+            for r in kayitlar:
+                a = anahtar_bul(r)
+                (gecersizler if a is None else gecerliler).append((a, r))
+            gecerliler.sort(key=lambda p: p[0], reverse=self.sort_reverse)
+            kayitlar = [r for _a, r in gecerliler] + [r for _a, r in gecersizler]
         return kayitlar
 
     @staticmethod
@@ -711,10 +795,44 @@ class IcraDosyalarimPanel:
         values.update({k: v.get() for k, v in self.taraf_vars.items()})
         values["taraf_tur"] = self.taraf_tur_var.get()
         durum_kod = self._durum_kod.get(self.durum_var.get(), icra_core.DURUM_VARSAYILAN)
-        self.running = True
-        self.sorgula_btn.set_state("disabled")
+        akis = _tid.basvur_ile_cakisma_akisi(self.app, self.kontrol.ad, self.kontrol)
+        if akis == "iptal":
+            return
+        if akis == "sirada":
+            self.durum_lbl.config(text="Sırada bekliyor…")
+            _tid.sira_bekle_ve_baslat(
+                self.app, self.kontrol.ad, self.kontrol,
+                lambda: self._gercek_sorgula(values, durum_kod),
+                durum_fn=lambda t: self.durum_lbl.config(text=t))
+            return
+        self._gercek_sorgula(values, durum_kod)
+
+    def _gercek_sorgula(self, values, durum_kod):
+        self._son_degerler, self._son_durum_kod = values, durum_kod
+        self.kontrol.sifirla()
+        self._set_running(True)
         self.durum_lbl.config(text="Sorgulanıyor…")
         threading.Thread(target=self._ara_bg, args=(values, durum_kod), daemon=True).start()
+
+    def duraklat_toggle(self):
+        if not self.running:
+            return
+        paused = self.kontrol.toggle_pause()
+        self.duraklat_btn.set_text("Devam" if paused else "Duraklat")
+
+    def durdur(self):
+        if self.running:
+            self.kontrol.durdur()
+
+    def _set_running(self, running):
+        self.running = running
+        st = "disabled" if running else "normal"
+        self.sorgula_btn.set_state(st)
+        self.duraklat_btn.set_state("normal" if running else "disabled")
+        self.duraklat_btn.set_text("Duraklat")
+        self.durdur_btn.set_state("normal" if running else "disabled")
+        if not running:
+            toplu_is_kontrol.KAYIT_DEFTERI.sil(self.kontrol.ad)
 
     def _ara_bg(self, values, durum_kod):
         # 1) ÖNCE DB'den göster (UYAP beklemeden) — ofis kapalı olsa bile veri görünür.
@@ -726,7 +844,7 @@ class IcraDosyalarimPanel:
             self.result_q.put(("db", db_kayitlar))
         # 2) SONRA canlı UYAP: yeni/eksik dosyaları ekle (birim+yıl+sıra ile birleştir).
         try:
-            kayitlar, _payload, yeni_dosyalar = self.engine.ara(values, durum_kod)
+            kayitlar, _payload, yeni_dosyalar = self.engine.ara(values, durum_kod, kontrol=self.kontrol)
             birlesik = self._birlestir(db_kayitlar, kayitlar)
             self.result_q.put(("ok", (birlesik, yeni_dosyalar)))
         except icra_core.OturumHatasi as e:
@@ -739,13 +857,31 @@ class IcraDosyalarimPanel:
                 self.result_q.put(("hata", str(e)))
 
     def _birlestir(self, db_kayitlar, canli_kayitlar):
-        """DB + canlı kayıtları birim+dosyaNo (≈ birim+yıl+sıra) ile birleştirir;
-        canlı taze olduğu için onu tercih eder, canlıda olmayan DB dosyalarını korur."""
+        """DB + canlı kayıtları birim+dosyaNo (≈ birim+yıl+sıra) ile ALAN ALAN
+        birleştirir (TÜM kaydı DEĞİŞTİRMEZ).
+
+        KRİTİK DÜZELTME (kullanıcı bulgusu, 2026-08-14: "Tüm Dosyalarım'da
+        güncellenmiş veri varken İcra Dosyalarım'da Sorgula dedim, var olan
+        veri gitti"): canlı UYAP'ın search_phrase_detayli.ajx yanıtı yalnız
+        KAPAK KÜNYESİ içerir — alacaklı/borçlu HİÇ GELMEZ (bkz. models/
+        icra_models/ingest.py modül başlığı). Eski sürüm canlı kaydı OLDUĞU
+        GİBİ DB kaydının ÜSTÜNE yazıyordu; bu yüzden DB'de doğru olan
+        alacaklı/borçlu EKRANDA boşa dönüyordu (veritabanının KENDİSİ
+        ETKİLENMEDİ — yalnız bu ekrandaki birleşik görünüm bozuluyordu).
+        Artık canlı bir alan yalnız DOLUYSA DB'deki karşılığının üstüne
+        yazılır; canlı boşsa DB'deki değer KORUNUR."""
         def anahtar(r):
             return (str(r.get("birimAdi", "")), str(r.get("dosyaNo", "")))
-        harita = {anahtar(r): r for r in (db_kayitlar or [])}
+        harita = {anahtar(r): dict(r) for r in (db_kayitlar or [])}
         for r in (canli_kayitlar or []):
-            harita[anahtar(r)] = r
+            k = anahtar(r)
+            if k in harita:
+                birlesik = harita[k]
+                for alan, deger in r.items():
+                    if deger not in (None, "", []):
+                        birlesik[alan] = deger
+            else:
+                harita[k] = r
         return list(harita.values())
 
     def _db_goster(self, kayitlar):
@@ -757,14 +893,12 @@ class IcraDosyalarimPanel:
 
     def _db_son(self, msg):
         """Canlı sorgu yapılamadı (ofis kapalı) ama DB sonuçları ekranda kalsın."""
-        self.running = False
-        self.sorgula_btn.set_state("normal")
+        self._set_running(False)
         self.durum_lbl.config(text=f"DB'den {len(self.all_records)} (ofis kapalı/erişilemedi)")
         self._log("ℹ️ Canlı UYAP yapılamadı; yalnız veritabanı gösteriliyor: " + str(msg))
 
     def _sorgu_bitti(self, tip, veri):
-        self.running = False
-        self.sorgula_btn.set_state("normal")
+        self._set_running(False)
         if tip == "ok":
             kayitlar, yeni_dosyalar = veri
             self.all_records = kayitlar
@@ -772,11 +906,9 @@ class IcraDosyalarimPanel:
             self.durum_lbl.config(text=f"{len(kayitlar)} sonuç")
             self._tabloyu_kur()
             if yeni_dosyalar:
-                from tkinter import messagebox
                 count = len(yeni_dosyalar)
                 list_str = "\n".join(f"- {item['dosya_no']} ({item['birim_adi']})" for item in yeni_dosyalar)
-                msg = f"Veritabanına {count} yeni dosya eklendi:\n\n{list_str}"
-                messagebox.showinfo("Yeni Dosyalar Eklendi", msg)
+                self._log(f"ℹ️ Veritabanına {count} yeni dosya eklendi:\n{list_str}")
         elif tip == "oturum":
             self.durum_lbl.config(text="Oturum/bağlantı hatası")
             self._log("⛔ Oturum/yetki hatası: " + veri)
@@ -802,12 +934,30 @@ class IcraDosyalarimPanel:
         threading.Thread(target=self._dosya_goruntule_bg, args=(rec,), daemon=True).start()
 
     def _dosya_goruntule_bg(self, rec):
+        # Stale-while-revalidate GERİ ALINDI (kullanıcı bulgusu, 2026-07-13):
+        # önbellekli 'ham' takibin türü/şekli/yolu için yalnız ÇIPLAK UYAP
+        # kodunu içeriyordu ("1"/"0" vb.) — okunabilir '(tahmini)' metni
+        # BİLEREK DB'ye yazılmıyor, yalnız CANLI yanıtta üretiliyor; sessiz
+        # arka plan tazelemesi bu metni kullanıcıya bir daha HİÇ göstermiyordu
+        # — gerçek regresyon. Düzeltme netleşene kadar HER ZAMAN canlı sorgu.
         sonuc = dosya_core.dosya_detay_goster_ve_kaydet(rec, log_fn=self._log)
-        self.result_q.put(("detay", sonuc))
+        # Barkod Sorgu (Kapalı Tebligat — PTT) modülünün DB'ye yazdığı gerçek
+        # sonuçlar — dosyalarim_genel.py._dosya_goruntule_bg'deki AYNI çağrı,
+        # bu ekranda eksikti (kullanıcı bulgusu, 2026-08-04: "barkod
+        # veritabanında olan veri tüm dosyaları sorgulama ekranına
+        # gelmiyor"). DOĞAL ANAHTARLA (birim+dosya_no) filtrelenir.
+        try:
+            barkodlar = dosya_core.tebligat_barkod_gecmisi_listele(
+                dosya_id=rec.get("dosyaId"), birim_id=rec.get("birimId"),
+                dosya_no=rec.get("dosyaNo"), dosya_tur_kod=rec.get("dosyaTurKod"))
+        except Exception:
+            barkodlar = []
+        self.result_q.put(("detay", (sonuc, barkodlar)))
 
-    def _detay_goster(self, sonuc):
+    def _detay_goster(self, veri):
         from tkinter import messagebox
         self.detay_btn.set_state("normal")
+        sonuc, barkodlar = veri
         ham, aile, kaydedildi, hata, taraflar = sonuc
         if hata:
             self.durum_lbl.config(text="Dosya ayrıntısı alınamadı")
@@ -842,9 +992,58 @@ class IcraDosyalarimPanel:
                 satir = f"  {t.get('rol', '')}: {t.get('adi', '')}"
                 if t.get("vekil"):
                     satir += f" — Vekil: {t['vekil'].strip('[]')}"
+                # Kesinleşme/Tebliğ Durumu (kullanıcı bulgusu, 2026-08-04:
+                # Barkod Sorgu ile hesaplanan bu veri Dosya Görüntüle'de hiç
+                # görünmüyordu) — yalnız borçlu satırlarında dolu olur, bkz.
+                # dosya_core._taraflar_kesinlesme_bilgisi_ekle.
+                if t.get("kesinlesmeDurumu"):
+                    satir += f" — Kesinleşme: {t['kesinlesmeDurumu']}"
+                if t.get("tebligatDurumu"):
+                    satir += f" — Tebliğ: {t['tebligatDurumu']}"
+                satirlar.append(satir)
+        # Barkod Sorgu (Kapalı Tebligat — PTT) modülünün DB'ye yazdığı gerçek
+        # sonuçlar — dosyalarim_genel.py._barkod_sekmesi'nin bu ekrandaki eşi
+        # (kullanıcı bulgusu, 2026-08-04: "barkod veritabanında olan veri tüm
+        # dosyaları sorgulama ekranına gelmiyor" — bu, DosyaTaraf.tebligatDurumu
+        # enum'undan AYRI bir veri kaynağıdır, o enum hiçbir zaman otomatik
+        # doldurulmuyor). En yeniden eskiye.
+        if barkodlar:
+            satirlar.append("")
+            satirlar.append("Barkod / Tebligat Bilgileri:")
+            for b in barkodlar:
+                satir = (f"  {b.get('evrakAciklama') or '—'} — Barkod: {b.get('barkod') or '—'}"
+                          f" — PTT Durumu: {b.get('pttDurumu') or '—'}")
+                if b.get("sonIslemTarihi"):
+                    satir += f" ({b['sonIslemTarihi']})"
+                satir += f" — Tebliğ Mazbatası: {b.get('tebligMazbatasiVar') or '—'}"
+                if b.get("kapaliTebligMazbatasiVar") == "Var":
+                    satir += ", Kapalı Mazbata: Var"
+                if b.get("sorguZamani"):
+                    satir += f" — Sorgu: {b['sorguZamani']}"
                 satirlar.append(satir)
         messagebox.showinfo(baslik, "\n".join(satirlar) +
                              ("\n\n(Yerel veritabanına kaydedildi.)" if kaydedildi else ""))
+        if kaydedildi:
+            # Kullanıcı bulgusu (İcra Dosyalarım, dosyalarim_genel.py:1004-1008'deki
+            # eşi 2026-07-12'de düzeltilmişti): kayıt DB'ye yazılıyordu ama tablo
+            # hiç yenilenmiyordu — kullanıcı elle "Sorgula"ya basmadan yeni veriyi
+            # göremiyordu. Canlı UYAP'a GİTMEYEN, yalnız DB'den tazeleyen hafif
+            # bir arka plan sorgusu (_ara_bg'nin 1. adımıyla aynı çağrı).
+            threading.Thread(target=self._db_yenile_bg, daemon=True).start()
+
+    def _db_yenile_bg(self):
+        try:
+            kayitlar = icra_core.db_dosyalari_getir(self._son_degerler, self._son_durum_kod)
+        except Exception as e:
+            self._log(f"⚠️ Liste tazelenemedi: {e}")
+            return
+        self.result_q.put(("db_yenile", kayitlar))
+
+    def _db_yenile_goster(self, kayitlar):
+        self.all_records = kayitlar
+        self.sort_key = None
+        self._tabloyu_kur()
+        self.durum_lbl.config(text=f"Kaydedildi — liste güncellendi ({len(kayitlar)} dosya)")
 
     def temizle(self):
         for v in self.vars.values():
@@ -888,6 +1087,8 @@ class IcraDosyalarimPanel:
                             text=f"DB'den {len(veri)} dosya · Sorgula ile UYAP'tan güncelle")
                 elif tip == "db_son":
                     self._db_son(veri)
+                elif tip == "db_yenile":
+                    self._db_yenile_goster(veri)
                 elif tip == "detay":
                     self._detay_goster(veri)
                 else:

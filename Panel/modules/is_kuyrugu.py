@@ -21,6 +21,7 @@ Kontrol düzlemi sözleşmesi (uyap_core/jobs.py):
     POST /__uyap_agent__/jobs/<id>/approve {"decision","selection",...} → {job}
 """
 
+import os
 import json
 import urllib.request
 import urllib.error
@@ -40,11 +41,34 @@ class OfisUlasilamiyor(Exception):
     (Paylaş/Al) henüz başlatılmamış olabilir."""
 
 
+def _yerel_jeton():
+    """uyap_core.uyap_proxy.require_auth()'un localhost'tan gelen TARAYICI-DIŞI isteklerde
+    aradığı 'X-Uyap-Local-Token' değerini okur (kullanıcı bulgusu 2026-08-11: bu modül
+    jetonu hiç göndermiyordu, ofis ağ geçidiyle AYRI süreçte çalıştığı için otomatik
+    urllib opener enjeksiyonundan (bkz. uyap_proxy._install_local_token_opener)
+    yararlanamıyor — o yüzden AYNI kullanıcıya özel jeton DOSYASINI burada da okuyup
+    isteğe kendimiz ekliyoruz; yol biçimi uyap_proxy._local_token_file() ile AYNI olmalı."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        path = os.path.join(base, "UyapIcra", "gw_local_token")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+        path = os.path.join(base, "uyapicra", "gw_local_token")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 def _istek(method, url, govde=None, timeout=30):
     data = json.dumps(govde, ensure_ascii=False).encode("utf-8") if govde is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     for k, v in _HEADERS.items():
         req.add_header(k, v)
+    jeton = _yerel_jeton()
+    if jeton:
+        req.add_header("X-Uyap-Local-Token", jeton)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             metin = r.read().decode("utf-8", "replace")
@@ -82,6 +106,18 @@ def is_durum(job_id, timeout=30):
     if status != 200:
         raise RuntimeError(veri.get("error") or f"İş durumu alınamadı (HTTP {status}).")
     return veri.get("job") or {}
+
+
+def is_liste(timeout=30):
+    """TÜM işleri (özet, loglar HARİÇ) döndürür — kullanıcı bulgusu (2026-08-14):
+    aynı dosya için art arda birden çok gönderim işi tetiklenmiş (pencere
+    kaybolunca kullanıcı butona tekrar tekrar basmış), hepsi sırada/onay
+    beklemede birikmişti. Yeni bir iş başlatmadan ÖNCE aynı türden bekleyen
+    bir iş olup olmadığını kontrol etmek için kullanılır."""
+    status, veri = _istek("GET", JOBS_URL, None, timeout)
+    if status != 200:
+        raise RuntimeError(veri.get("error") or f"İş listesi alınamadı (HTTP {status}).")
+    return veri.get("jobs") or []
 
 
 def is_iptal(job_id, timeout=30):

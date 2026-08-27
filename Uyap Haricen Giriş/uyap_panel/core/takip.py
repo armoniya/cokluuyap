@@ -17,7 +17,7 @@ import base64
 import urllib.request
 import urllib.error
 
-from .config import PORT
+from .config import PORT, local_gateway_token
 
 JOB_TYPE = {"mts": "coklu_takip_ac", "icra": "icra_takip_ac"}
 
@@ -76,6 +76,9 @@ class TakipService:
                                      headers={"Content-Type": "application/json"})
         tok = base64.b64encode(f"{self.username}:{self.password}".encode("utf-8")).decode("ascii")
         req.add_header("Authorization", "Basic " + tok)
+        local_tok = local_gateway_token()
+        if local_tok:
+            req.add_header("X-Uyap-Local-Token", local_tok)
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
                 txt = r.read().decode("utf-8")
@@ -89,9 +92,23 @@ class TakipService:
             return None, f"Yerel UYAP bağlantısına ulaşılamadı (önce 'Paylaş' veya 'Al'): {e}"
 
     # ── İş yaşam döngüsü ──
-    def build_params(self, takipler, *, il, adliye, onay_modu, vekalet=None, dayanak=None):
-        """coklu_takip_ac / icra_takip_ac için ortak params sözlüğü."""
+    def build_params(self, takipler, *, il, adliye, onay_modu, odeme_aktif=None,
+                     odeme_onay_modu=None, tebligat_aktif=None, tebligat_onay_modu=None,
+                     vekalet=None, dayanak=None):
+        """coklu_takip_ac / icra_takip_ac için ortak params sözlüğü.
+
+        odeme_aktif/odeme_onay_modu/tebligat_aktif/tebligat_onay_modu: yalnız MTS
+        (coklu_takip_ac) kullanır — bkz. job_handlers.py. icra_takip_ac bunları görmez
+        (None ise hiç eklenmez), o yüzden icra tarafını etkilemez."""
         params = {"takipler": takipler, "il": il, "adliye": adliye, "onay_modu": onay_modu}
+        if odeme_aktif is not None:
+            params["odeme_aktif"] = odeme_aktif
+        if odeme_onay_modu is not None:
+            params["odeme_onay_modu"] = odeme_onay_modu
+        if tebligat_aktif is not None:
+            params["tebligat_aktif"] = tebligat_aktif
+        if tebligat_onay_modu is not None:
+            params["tebligat_onay_modu"] = tebligat_onay_modu
         if vekalet:
             params["vekalet"] = {t.get("alacakli", ""): vekalet for t in takipler}
         if dayanak:

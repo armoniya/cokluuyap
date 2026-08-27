@@ -242,6 +242,40 @@ class DosyaTaraf(models.Model):
         BASVURUCU = "basvurucu", "Başvurucu"
         DIGER_TARAF = "diger taraf", "Diğer Taraf"
 
+    class KesinlesmeDurumu(models.TextChoices):
+        """Borçlu bazlı kesinleşme durumu — aynı dosyada birden fazla borçlu
+        varsa her biri kendi DosyaTaraf satırında AYRI değer taşır (kullanıcı
+        isteği, 2026-07-13). Şimdilik yalnız alan tanımı: girişi UYAP'tan
+        OTOMATİK ÇEKİLMİYOR, ileride yazılacak bir kesinleşme-girişi
+        fonksiyonuyla elle/hesapla doldurulacak — bu yüzden varsayılan boş.
+        Seçenek kümesi kullanıcı isteğiyle 2026-08-03'te güncellendi; bu
+        değerlere ilişkin kurallar (hangi durumda hangisinin seçileceği)
+        henüz belirlenmedi — bkz. alan tanımı üstündeki not."""
+        KESINLESTI = "kesinlesti", "Kesinleşti"
+        KESINLESME_BEKLIYOR = "kesinlesme_bekliyor", "Kesinleşme Bekliyor"
+        ITIRAZ = "itiraz", "İtiraz"
+        KONKORDATO = "konkordato", "Konkordato"
+        VEFAT = "vefat", "Vefat"
+        VASI = "vasi", "Vasi"
+
+    class TebligatDurumu(models.TextChoices):
+        """Borçlu bazlı tebliğ durumu (kullanıcı isteği, 2026-08-03) —
+        KesinlesmeDurumu ile AYNI desen: aynı dosyada birden fazla borçlu
+        varsa her biri kendi DosyaTaraf satırında AYRI değer taşır. Kaynak
+        veri barkod_sorgu.py'nin PTT sorgusundan (TebligatBarkod.ptt_durumu,
+        serbest metin) geliyor ama bu alan OTOMATİK türetilmiyor — hangi PTT
+        durumunun hangi seçeneğe eşleneceğine ve "yeniden tebliğ talep
+        edilecek/edildi" gibi elle işlenen iş akışı durumlarının nasıl
+        tetikleneceğine ilişkin kurallar henüz belirlenmedi (kullanıcı,
+        2026-08-03: "Bu veri türlerine ilişkin kuralları sonra
+        belirleyeceğiz"). Şimdilik yalnız alan tanımı, varsayılan boş."""
+        TEBLIG_EDILDI = "teblig_edildi", "Tebliğ Edildi"
+        IADE = "iade", "İade"
+        DAGITIMDA = "dagitimda", "Dağıtımda"
+        MERNIS_YOK = "mernis_yok", "Mernis Yok"
+        YENIDEN_TEBLIG_TALEP_EDILECEK = "yeniden_teblig_talep_edilecek", "Yeniden Tebliğ Talep Edilecek"
+        YENIDEN_TEBLIG_TALEP_EDILDI = "yeniden_teblig_talep_edildi", "Yeniden Tebliğ Talep Edildi"
+
     dosya = models.ForeignKey(Dosya, on_delete=models.CASCADE, related_name="taraf_baglari")
     taraf = models.ForeignKey(Taraf, on_delete=models.PROTECT, related_name="dosya_baglari")
     # max_length=20 AYNI hata sınıfını (bkz. migration 0005/0006) 'tüm türler'
@@ -258,6 +292,24 @@ class DosyaTaraf(models.Model):
     # için yalnız ilk vekil kaydedilip diğerleri sessizce atılıyordu.
     vekiller = models.ManyToManyField(Vekil, blank=True, related_name="temsil_baglari")
     sira = models.PositiveIntegerField(default=0)
+
+    # Yalnız rol=borclu için anlamlıdır (alacaklı/diğer rollerde boş kalır).
+    # Şimdilik hep boş yazılır — UYAP'tan uydurulmaz, ileride kesinleşme-girişi
+    # fonksiyonu ile doldurulacak (kullanıcı isteği, 2026-07-13).
+    kesinlesme_durumu = models.CharField("Kesinleşme Durumu", max_length=20,
+                                         choices=KesinlesmeDurumu.choices, blank=True)
+    # Yalnız rol=borclu için anlamlıdır (alacaklı/diğer rollerde boş kalır).
+    # kesinlesme_durumu ile AYNI gerekçeyle şimdilik hep boş — bkz.
+    # TebligatDurumu tanımı üstündeki not (kullanıcı isteği, 2026-08-03).
+    tebligat_durumu = models.CharField("Tebliğ Durumu", max_length=30,
+                                        choices=TebligatDurumu.choices, blank=True)
+
+    # Kesinleşme hesabının (bkz. kesinlesme_core.py) girdisi — UYAP'ta itiraz
+    # tespiti için canlı doğrulanmış bir evrak-türü eşlemesi YOK (kullanıcı
+    # kararı, 2026-08-03: elle işaretleme), bu yüzden burada da UYAP'tan
+    # otomatik doldurulmaz, yalnız kullanıcı elle işaretler.
+    itiraz_edildi_mi = models.BooleanField("İtiraz Edildi mi", default=False)
+    itiraz_tarihi = models.DateField("İtiraz Tarihi", null=True, blank=True)
 
     class Meta:
         verbose_name = "Dosya Tarafı"
@@ -329,6 +381,96 @@ class HukukDavaDetay(models.Model):
         return f"{self.dosya} · Dava Detayı"
 
 
+class TebligatBarkod(models.Model):
+    """'Barkod Sorgu' modülünün (Panel/modules/barkod_sorgu.py) her çalıştırmada
+    upsert ettiği sonuç kaydı: bir 'Kapalı Tebligat' evrakının PTT barkodu +
+    PTT'deki güncel tebliğ durumu + o dosyada tebliğ mazbatasının (fiziki
+    dönüş belgesi) dosyaya dönüp dönmediği. KALICI anahtar = (dosya,
+    birim_evrak_no) [uq_dosya_tebligat_barkod] — Evrak modeliyle AYNI doğal
+    anahtar (bkz. Evrak.birim_evrak_no yorumu); aynı evrak tekrar sorgulanınca
+    çoğaltılmaz, güncellenir."""
+
+    dosya = models.ForeignKey(Dosya, on_delete=models.CASCADE, related_name="tebligat_barkodlari")
+    birim_evrak_no = models.PositiveIntegerField("Birim Evrak No", db_index=True)
+
+    # Bu tebligatın HANGİ borçluya ait olduğu (kullanıcı sorusu, 2026-08-04:
+    # kesinleşme hesabı borçlu bazlı ama TebligatBarkod yalnız Dosya'ya
+    # bağlıydı — çok borçlulu dosyada ayrım yoktu). barkod_sorgu.py ingest
+    # sırasında yalnız dosyada TEK borçlu varsa otomatik atar (bkz.
+    # _borclu_coz_tekil) — çok borçlulu dosyada hangi evrakın hangi borçluya
+    # gittiğini ayırt eden CANLI doğrulanmış bir alan/desen henüz yok, bu
+    # yüzden orada UYDURULMAZ, boş kalır.
+    borclu = models.ForeignKey(
+        DosyaTaraf, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="tebligat_barkodlari",
+        limit_choices_to={"rol": DosyaTaraf.Rol.BORCLU})
+
+    evrak_aciklama = models.CharField("Evrak Açıklaması", max_length=500, blank=True)
+    evrak_tarihi = models.CharField("Evrak Tarihi", max_length=40, blank=True)
+
+    barkod = models.CharField("PTT Barkod No", max_length=32, blank=True, db_index=True)
+    elektronik_tebligat = models.BooleanField(
+        "Elektronik Tebligat (PTT'de takip yok)", default=False)
+
+    # Kullanıcı bulgusu (2026-08-03, beşinci tur): evrak açıklaması/PDF gövde
+    # metnindeki "... ihtiva eder" ibaresi ve elektronik tebligatlardaki
+    # "üçüncü taraf" parantezinden çıkarılan sınıflandırma (Ödeme Emri /
+    # Banka (Haciz İhbarnamesi) / Maaş (Haciz İhbarnamesi) / 103 Davetiyesi /
+    # Kıymet Takdiri Raporu / Bilirkişi Raporu / ...) — bkz.
+    # barkod_sorgu._tebligat_turunu_belirle. CANLI toplu veriyle
+    # doğrulanmadı, anahtar kelimeler kullanıcı örneklerinden çıkarıldı.
+    tebligat_turu = models.CharField("Tebligat Türü", max_length=60, blank=True)
+
+    ptt_durumu = models.CharField("PTT Durumu", max_length=255, blank=True)
+    son_islem_tarihi = models.CharField("Son İşlem Tarihi", max_length=40, blank=True)
+    ham_yanit = models.JSONField("PTT Ham Yanıt", null=True, blank=True)
+
+    # 'Mazbata' = tebliğ mazbatası (fiziki dönüş belgesi) dosyaya dönmüş mü —
+    # bkz. barkod_sorgu.py TEBLIG_MAZBATASI_TUR/KAPALI_TEBLIG_MAZBATASI_TUR;
+    # PTT durumundan BAĞIMSIZ bir bilgidir (PTT "teslim edildi" dese de
+    # mazbata dosyaya henüz dönmemiş olabilir).
+    tebligat_mazbatasi_var = models.BooleanField("Tebliğ Mazbatası Dosyaya Dönmüş", default=False)
+    tebligat_mazbatasi_aciklama = models.CharField(
+        "Tebliğ Mazbatası Açıklaması", max_length=500, blank=True)
+    kapali_tebligat_mazbatasi_var = models.BooleanField(
+        "Kapalı Tebliğ Mazbatası Var", default=False)
+
+    # Avukat portalından bu evrak/borçlu için (21/2 dahil) bir yeniden tebliğ
+    # talebi ATILMIŞ MI — dosyanın evrak listesinde "Avukat Portal Tebligat
+    # Talebi" türünde bir kayıt var mı diye barkod_sorgu.py her taramada
+    # bakar (kullanıcı isteği, 2026-08-13). Dosya açılışındaki otomatik
+    # tebligat bu türde SAYILMAZ, yalnız avukatın portaldan attığı talepler.
+    yeniden_teblig_talep_edildi = models.BooleanField(
+        "Yeniden Tebliğ Talebi Gönderildi mi", default=False)
+
+    # T.K.21/2 UYGUNLUK TARAMASI sonucu (bkz. Panel/modules/teblig_21_2_core.py
+    # iade_tarama) — kullanıcı bulgusu (2026-08-14): "son 21/2 raporu silindi,
+    # bu bilgiler veritabanına eklenmiyor mu?" — eskiden tarama sonucu YALNIZ
+    # Panel'in belleğinde tutuluyordu, program kapanınca/yeniden başlayınca
+    # kayboluyordu. Artık her tarama bu alanlara YAZILIR; "Son 21/2 Raporu"
+    # buradan (belleğe değil) okunur. t212_tarandi_zamani NULL = bu kayıt
+    # hiç 21/2 taramasından geçmedi (rapora girmez).
+    t212_kategori = models.CharField("21/2 Tarama Sonucu", max_length=255, blank=True)
+    t212_teblig_adresi = models.CharField("21/2 Tebligat Adresi", max_length=500, blank=True)
+    t212_mernis_adresi = models.CharField("21/2 Mernis Adresi", max_length=500, blank=True)
+    t212_tarandi_zamani = models.DateTimeField("21/2 Son Tarama Zamanı", null=True, blank=True)
+
+    sorgu_zamani = models.DateTimeField(auto_now=True)
+    olusturulma = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Tebligat Barkod Sorgusu"
+        verbose_name_plural = "Tebligat Barkod Sorguları"
+        ordering = ["-sorgu_zamani"]
+        constraints = [
+            models.UniqueConstraint(fields=["dosya", "birim_evrak_no"],
+                                    name="uq_dosya_tebligat_barkod"),
+        ]
+
+    def __str__(self):
+        return f"{self.dosya} · {self.barkod or '(barkodsuz)'}"
+
+
 class Evrak(models.Model):
     """Bir dosyaya ait evrak (karar, tebligat, dilekçe, dayanak vb.) önbellek
     kaydı. KALICI anahtar = (dosya, birim_evrak_no) [uq_dosya_evrak].
@@ -367,3 +509,24 @@ class Evrak(models.Model):
 
     def __str__(self):
         return f"{self.dosya} · {self.birim_evrak_no}"
+
+
+class ResmiTatil(models.Model):
+    """Resmi/dini tatil takvimi — kesinleşme süre hesaplarında (bkz.
+    kesinlesme_core.py) 7. günün hafta sonu/tatile denk gelmesi durumunda
+    ilk iş gününe kaydırılması için kullanılır. Kullanıcı kararıyla elle
+    yönetilir (2026-08-03): dini bayramlar (Ramazan/Kurban) yıldan yıla
+    kayar ve Diyanet'in resmi ilanı esas alınmalı — bu tablo TEK otorite
+    kaynağıdır. Python `holidays` kütüphanesi yalnız Ayarlar ekranındaki
+    (ileride yazılacak) 'öneri doldur' özelliği için kullanılacak, asla
+    doğrudan bu tabloya yazmaz."""
+    tarih = models.DateField("Tarih", unique=True)
+    aciklama = models.CharField("Açıklama", max_length=120, blank=True)
+
+    class Meta:
+        verbose_name = "Resmi Tatil"
+        verbose_name_plural = "Resmi Tatiller"
+        ordering = ["tarih"]
+
+    def __str__(self):
+        return f"{self.tarih:%d.%m.%Y}" + (f" — {self.aciklama}" if self.aciklama else "")

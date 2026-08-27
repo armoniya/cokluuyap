@@ -50,10 +50,13 @@ from modules.udf import UdfPanel
 from modules.sgk import SgkPanel
 from modules.icra_dosyalarim import IcraDosyalarimPanel
 from modules.mts_takip import MtsTakipPanel
+from modules.potek_takip import IpotekTakipPanel
+from modules.xml_takip import XmlTakipPanel
 from modules.logger import LoggerPanel
 from modules.ayarlar import AyarlarPanel, auto_connect_mode
 from modules.senkron_kapsami import SenkronKapsamiPanel
 from modules.dosyalarim_genel import DosyalarimGenelPanel
+from modules.barkod_sorgu_panel import BarkodSorguPanel
 from modules.uretilmis_runner import UretilmisRunner
 from modules.magaza import MagazaPanel
 from modules import logger_core
@@ -1246,8 +1249,11 @@ class Panel(tk.Tk):
         mantığı AYNEN ilgili panel sınıfından gelir; burada yeniden yazılmaz."""
         if key in self.panels:
             return self.panels[key]
+        if key in self.ISTEMCI_MODU_ENGELLI and dosya_core.bu_makine_istemci_mi():
+            self.panels[key] = self._istemci_modu_panel(key)
+            return self.panels[key]
         uretilmis = {m["key"]: m for m in logger_core.registry_oku()}
-        MODUL = {"icra_dosyalarim", "mts", "baglanti", "udf", "sgk", "logger",
+        MODUL = {"icra_dosyalarim", "mts", "potek_takip", "xml", "baglanti", "udf", "sgk", "logger",
                  "ayarlar", "magaza", "senkron_kapsami", "dosyalarim_genel"}
         if key in MODUL or key in uretilmis:
             frame = tk.Frame(self.content, bg=C.BG)
@@ -1255,6 +1261,10 @@ class Panel(tk.Tk):
                 self.icra = IcraDosyalarimPanel(frame, self)
             elif key == "mts":
                 self.mts = MtsTakipPanel(frame, self)
+            elif key == "potek_takip":
+                self.potek_takip = IpotekTakipPanel(frame, self)
+            elif key == "xml":
+                self.xml_takip = XmlTakipPanel(frame, self)
             elif key == "baglanti":
                 self.baglanti = BaglantiPanel(frame, self)
             elif key == "udf":
@@ -1271,6 +1281,13 @@ class Panel(tk.Tk):
                 self.dosyalarim_genel = DosyalarimGenelPanel(frame, self)
             elif key == "magaza":
                 self.magaza = MagazaPanel(frame, self)
+            elif key == "barkod_sorgu":
+                # Jenerik UretilmisRunner (Excel/tarih aralığı) YERİNE özel
+                # panel — DB'den İcra dosyası seçip sorgulama + geçmiş sonuç
+                # raporu (kullanıcı isteği, 2026-08-03). uretilmis_moduller.json
+                # kaydı hâlâ Mağaza'daki sahiplik/menü girişini besliyor,
+                # yalnızca burada HANGİ panelin kurulacağı değişti.
+                self.barkod_sorgu_panel = BarkodSorguPanel(frame, self)
             elif key in uretilmis:
                 m = uretilmis[key]
                 try:
@@ -1366,6 +1383,43 @@ class Panel(tk.Tk):
                 self.nav_leaves[node["key"]] = leaf
 
     # ── boş modül paneli (içerik ileride gelecek) ──
+    # İstemci modunda (bkz. dosya_core.bu_makine_istemci_mi) yerel veritabanı
+    # HİÇ başlamadı — bu üç modül (Dosyalarım (Tümü), Senkron Kapsamı, İcra
+    # Dosyalarım) onsuz çalışamaz, gerçek paneli kurmaya ÇALIŞMAZ (hata verir).
+    # Kullanıcı bulgusu (2026-07-13): aynı ofisin birden fazla çalışanı ayrı
+    # ayrı veritabanı/UYAP senkronu tutmasın — istemci makine, ofis
+    # sunucusunun web panelinden (Panel/web/server.py, 8090) görüntülemeli.
+    ISTEMCI_MODU_ENGELLI = {"icra_dosyalarim", "dosyalarim_genel", "senkron_kapsami", "barkod_sorgu"}
+
+    def _istemci_modu_panel(self, key):
+        title = self.labels.get(key, key)
+        p = tk.Frame(self.content, bg=C.BG)
+
+        head = tk.Frame(p, bg=C.BG)
+        head.pack(fill="x", padx=40, pady=(34, 0))
+        tk.Label(head, text=title, bg=C.BG, fg=C.INK,
+                 font=self.f_h1).pack(anchor="w")
+        tk.Frame(p, bg=C.LINE, height=1).pack(fill="x", padx=40, pady=(18, 0))
+
+        mid = tk.Frame(p, bg=C.BG)
+        mid.pack(fill="both", expand=True)
+        box = tk.Frame(mid, bg=C.BG)
+        box.place(relx=0.5, rely=0.46, anchor="center")
+
+        ic = tk.Canvas(box, width=64, height=64, bg=C.BG, highlightthickness=0)
+        ic.create_oval(8, 8, 56, 56, fill=C.SAGE_TINT, outline="")
+        ic.create_oval(24, 24, 40, 40, fill=C.SAGE, outline="")
+        ic.pack()
+        tk.Label(box, text="Bu özellik yalnız ofis sunucusunda çalışır",
+                 bg=C.BG, fg=C.INK, font=tkfont.Font(family="Segoe UI Semibold", size=13)
+                 ).pack(pady=(14, 4))
+        tk.Label(box, text="Bu bilgisayar 'İstemci' modunda (Ayarlar > Bağlantı) —\n"
+                           "dosyalarınızı görüntülemek için ofis bilgisayarının web\n"
+                           "panelini (tarayıcıdan http://<ofis-ip>:8090) kullanın.",
+                 bg=C.BG, fg=C.INK_SOFT, font=self.f_body,
+                 wraplength=420, justify="center").pack()
+        return p
+
     def _empty_panel(self, key):
         title = self.labels.get(key, key)
         p = tk.Frame(self.content, bg=C.BG)
@@ -1483,7 +1537,15 @@ def _dogru_python_sagla():
 
 def _veritabani_hazirla():
     """Açılışta gömülü PostgreSQL'i başlatır + migrate eder. Hata olursa GUI yine
-    açılır (sorgular canlı UYAP'a düşer; db_baslat zaten bunu loglar)."""
+    açılır (sorgular canlı UYAP'a düşer; db_baslat zaten bunu loglar).
+
+    İSTEMCİ modundaki bir makinede (bkz. dosya_core.bu_makine_istemci_mi)
+    gömülü Postgres'i HİÇ KURMAZ/BAŞLATMAZ — bu makine ofisin UYAP oturumunu
+    tutan sunucu değil, kendi başına ayrı bir veritabanı tutmamalı (kullanıcı
+    bulgusu, 2026-07-13); dosyalar sunucunun web panelinden görüntülenir."""
+    if dosya_core.bu_makine_istemci_mi():
+        print("… bu makine 'İstemci' modunda — gömülü veritabanı kurulmadı.")
+        return
     try:
         kok = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if kok not in sys.path:

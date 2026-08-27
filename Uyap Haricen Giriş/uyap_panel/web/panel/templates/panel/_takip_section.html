@@ -31,8 +31,32 @@
     </div>
   </div>
 
+  {% if kind == 'mts' %}
   <div class="step">
-    <h4><span class="step-no">3</span>Belgeler <span class="pill">(opsiyonel; tümüne uygulanır)</span></h4>
+    <h4><span class="step-no">3</span>Ödeme &amp; Tebligat <span class="pill">(dosya açıldıktan SONRA, ayrı onay turlarıyla)</span></h4>
+    <div class="row">
+      <div>
+        <label><input type="checkbox" data-role="odeme-aktif" {% if odeme_aktif %}checked{% endif %}> Harç ödemesini dene</label>
+        <div class="radios" data-role="odeme-onay-radios">
+          <label><input type="radio" name="odeme-onay-mts" value="yok" {% if odeme_onay_modu == 'yok' or not odeme_onay_modu %}checked{% endif %}> Onaysız (hepsini öde)</label>
+          <label><input type="radio" name="odeme-onay-mts" value="tek_tek" {% if odeme_onay_modu == 'tek_tek' %}checked{% endif %}> Her dosyada onayla</label>
+          <label><input type="radio" name="odeme-onay-mts" value="toplu" {% if odeme_onay_modu == 'toplu' %}checked{% endif %}> Toplu önizle, tek onay</label>
+        </div>
+      </div>
+      <div>
+        <label><input type="checkbox" data-role="tebligat-aktif" {% if tebligat_aktif %}checked{% endif %}> Tebligat göndermeyi dene</label>
+        <div class="radios" data-role="tebligat-onay-radios">
+          <label><input type="radio" name="tebligat-onay-mts" value="yok" {% if tebligat_onay_modu == 'yok' or not tebligat_onay_modu %}checked{% endif %}> Onaysız (hepsine gönder)</label>
+          <label><input type="radio" name="tebligat-onay-mts" value="tek_tek" {% if tebligat_onay_modu == 'tek_tek' %}checked{% endif %}> Her dosyada onayla</label>
+          <label><input type="radio" name="tebligat-onay-mts" value="toplu" {% if tebligat_onay_modu == 'toplu' %}checked{% endif %}> Toplu önizle, tek onay</label>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="step">
+    <h4><span class="step-no">{% if kind == 'mts' %}4{% else %}3{% endif %}</span>Belgeler <span class="pill">(opsiyonel; tümüne uygulanır)</span></h4>
     <div class="row">
       <div>
         <label>Vekalet PDF</label>

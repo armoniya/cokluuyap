@@ -35,8 +35,16 @@ import asyncio
 import traceback
 import urllib.parse
 
+import httpx
+
 from . import uyap_proxy
 from ._runtime import batch_write, WRITE_METHODS
+
+# GET'lerde otomatik tekrar denenecek bağlantı-seviyesi geçici hatalar (bkz. JobContext.uyap
+# docstring'i). httpx.TransportError'ın alt sınıflarıdır; TimeoutException'ı BİLEREK içermez
+# (zaman aşımı UYAP'ın gerçekten yavaş/meşgul olduğunu gösterebilir, tekrar denemek yükü katlar).
+_GET_TRANSIENT_ERRORS = (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError,
+                        httpx.WriteError, httpx.PoolTimeout)
 from .p2p_wire import AGENT_PREFIX
 
 # Kontrol düzlemi yol öneki (tam): AGENT_PREFIX + "/jobs".
@@ -189,35 +197,61 @@ class JobContext:
         files: multipart/form-data için httpx 'files' sözlüğü. Düz metin alanları
                (None, "deger") tuple'ı ile, dosyalar (adi, baytlar, mime) ile verilir
                (bkz. uyap_core.mts.evrak.items_kur ile üretilen alanlar).
-        write: None ise metoda göre otomatik belirlenir (POST/PUT/PATCH/DELETE → yazma).
-               Yazma işlemleri DÜŞÜK öncelikli batch_write() geçidinden geçer: her adımdan
-               önce bekleyen bireysel (anlık) kullanıcı isteğine yol verir, sonra devam eder.
+        write: ARTIK YALNIZ BELGESELDİR, kilitleme kararını ETKİLEMEZ (bkz. altındaki
+               NOT) — geriye uyumluluk için parametre duruyor, çağıranların hiçbiri
+               değiştirilmesi gerekmiyor. POST/PUT/PATCH/DELETE (metoda göre otomatik)
+               HER ZAMAN DÜŞÜK öncelikli batch_write() geçidinden geçer: her adımdan önce
+               bekleyen bireysel (anlık) kullanıcı isteğine yol verir, sonra devam eder.
         relogin: UYAP "giriş duvarı" döndürürse bir kez yeniden giriş yapıp tekrar dener.
-        """
+
+        GET istekleri, bağlantı yanıt okunmadan koparsa (httpx.ReadError vb. — bkz. kullanıcı
+        bulgusu 2026-08-11) otomatik olarak 1 kez tekrar denenir: GET'ler bu kod tabanında HER
+        ZAMAN durum-DEĞİŞTİRMEYEN sorgu kabul edilir (yukarıdaki write= notuna bkz. — yalnız
+        GET'ler kilitsiz/serbest bırakılıyor), o yüzden burada retry KOŞULSUZ güvenlidir. POST/
+        PUT/PATCH/DELETE'te AYNI riski taşımaz: yanıtı okurken bağlantı koparsa istek UYAP'a
+        ULAŞMIŞ olabilir, körlemesine tekrar YİNELENEN bir işlem (ör. mükerrer evrak) yaratabilir
+        — bu yüzden burada retry EDİLMEZ; çağıran, güvenli olduğunu bildiği belirli bir uç nokta
+        için kendi retry'ını (bkz. mts.takip._api_text retry=) uygulamalı.
+
+        NOT (kullanıcı bulgusu, 2026-07-12): `write=False` eskiden durum-DEĞİŞTİRMEYEN
+        sorguları (ör. mts/sgk.py'nin TÜM SGK sorguları) batch_write() geçidine hiç
+        SOKMUYORDU — "salt okuma, kilit gerekmez" varsayımıyla. Ama UYAP tek oturumda
+        AYNI ANDA ikinci bir isteği (yazma ya da okuma fark etmeksizin) KABUL ETMİYOR
+        ("Eş zamanlı olarak birden fazla sorgulama yapamazsınız!" — bkz. Panel/Eşzamanlı
+        hata metni.txt); iki farklı iş (job) ya da bir iş + anlık bir istek aynı anda
+        UYAP'a giderse ikincisi reddediliyordu. Bu yüzden `write` artık kilitleme
+        kararını ETKİLEMEZ — POST/PUT/PATCH/DELETE HER ZAMAN kilitlenir (yalnız gerçek
+        GET'ler serbest kalır, UYAP eşzamanlı GET'i sorun etmiyor)."""
         gw = uyap_proxy.gw
         if gw is None:
             raise RuntimeError("UYAP oturumu hazır değil (gw=None). Ofis ajanı giriş yapmadan iş çalıştırılamaz.")
-        if write is None:
-            write = method.upper() in WRITE_METHODS
 
         url = f"{uyap_proxy.UYAP_BASE}/{path.lstrip('/')}"
         hdrs = {"Referer": f"{uyap_proxy.UYAP_BASE}/"}
         if headers:
             hdrs.update(headers)
 
-        async def _do():
-            resp = await gw.client.request(
+        async def _send():
+            return await gw.client.request(
                 method, url, params=params, json=json, data=data,
                 content=content, files=files, headers=hdrs)
+
+        async def _do():
+            if method.upper() == "GET":
+                try:
+                    resp = await _send()
+                except _GET_TRANSIENT_ERRORS as e:
+                    await asyncio.sleep(1.5)
+                    resp = await _send()
+            else:
+                resp = await _send()
             if relogin and uyap_proxy._looks_like_login_wall(resp):
                 await gw.relogin()
-                resp = await gw.client.request(
-                    method, url, params=params, json=json, data=data,
-                    content=content, files=files, headers=hdrs)
+                resp = await _send()
             return resp
 
         gw.touch()
-        if write:
+        if method.upper() in WRITE_METHODS:
             async with batch_write():
                 return await _do()
         return await _do()
@@ -243,30 +277,38 @@ class JobManager:
         return job
 
     async def _run(self, job):
-        async with self._sem:
-            if job._cancel:
-                job.status = CANCELLED
+        try:
+            async with self._sem:
+                if job._cancel:
+                    job.status = CANCELLED
+                    job.touch()
+                    return
+                job.status = RUNNING
                 job.touch()
-                return
-            job.status = RUNNING
+                ctx = JobContext(job)
+                handler = _HANDLERS[job.type]
+                try:
+                    job.result = await handler(ctx)
+                    job.status = DONE if not job._cancel else CANCELLED
+                except JobCancelled:
+                    job.status = CANCELLED
+                    ctx.log("İş iptal edildi.")
+                except asyncio.CancelledError:
+                    job.status = CANCELLED
+                    raise
+                except Exception as e:
+                    job.status = ERROR
+                    job.error = f"{type(e).__name__}: {e}"
+                    ctx.log("HATA:\n" + traceback.format_exc())
+                finally:
+                    job.touch()
+        except asyncio.CancelledError:
+            # Semafor beklerken (henüz RUNNING olmadan) iptal edilirse yukarıdaki
+            # try/except'e HİÇ girilmez — kullanıcı bulgusu (2026-08-14): kuyrukta
+            # bekleyen 2 iş cancel() sonrası "queued" durumunda TAKILI kaldı;
+            # altta yatan görev zaten ölmüştü ama job.status hiç güncellenmemişti.
+            job.status = CANCELLED
             job.touch()
-            ctx = JobContext(job)
-            handler = _HANDLERS[job.type]
-            try:
-                job.result = await handler(ctx)
-                job.status = DONE if not job._cancel else CANCELLED
-            except JobCancelled:
-                job.status = CANCELLED
-                ctx.log("İş iptal edildi.")
-            except asyncio.CancelledError:
-                job.status = CANCELLED
-                raise
-            except Exception as e:
-                job.status = ERROR
-                job.error = f"{type(e).__name__}: {e}"
-                ctx.log("HATA:\n" + traceback.format_exc())
-            finally:
-                job.touch()
 
     def cancel(self, job_id):
         job = self.jobs.get(job_id)

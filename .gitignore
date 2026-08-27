@@ -53,6 +53,10 @@ env/
 
 # ── Üretilen Excel/çıktı artefaktları (kişisel veri içerebilir) ──
 *_Yatay_Alacak_Listesi.xlsx
+Dosya Sorgulama.xlsx
+docs/bos_borclu_raporu.csv
+Panel/*Mazbata*.pdf
+Panel/*mazbata*.pdf
 
 # ── İşletim sistemi / editör ──
 .DS_Store

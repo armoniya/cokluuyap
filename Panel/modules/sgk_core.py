@@ -20,8 +20,16 @@ import threading
 
 import openpyxl
 
-# Orijinal SGK modülünün bulunduğu klasörü import yoluna ekle
+# Bu dosyanın kendi klasörü (Panel/modules) — kardeş modüllerin (bare) içe
+# aktarımı için sys.path'e eklenir; import SIRASI ne olursa olsun güvenli olsun
+# diye (bkz. dosya_core.py'deki aynı desen) HER modül bunu KENDİSİ yapar.
 _HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from toplu_is_kontrol import TopluIsKontrolu, KAYIT_DEFTERI  # noqa: E402
+
+# Orijinal SGK modülünün bulunduğu klasörü import yoluna ekle
 _SGK_DIR = os.path.normpath(os.path.join(_HERE, "..", "..", "Sorgu", "SGK Sorgu"))
 if _SGK_DIR not in sys.path:
     sys.path.insert(0, _SGK_DIR)
@@ -79,8 +87,7 @@ class SgkBatch:
         self.status_text = ""
 
         self.running = False
-        self._paused = False
-        self._stop = False
+        self.kontrol = TopluIsKontrolu(ad="Toplu SGK Sorgu")
         self._lock = threading.Lock()
 
     # ─────────────────────────── günlük / durum ───────────────────────────
@@ -212,41 +219,38 @@ class SgkBatch:
                 self.log("Tekrar denenecek hatalı hücre yok.")
                 return False
         self.running = True
-        self._stop = False
-        self._paused = False
+        self.kontrol.sifirla()
         threading.Thread(target=self._worker, args=(mode, secili), daemon=True).start()
         return True
 
     def pause(self):
         if self.running:
-            self._paused = True
+            self.kontrol.duraklat()
 
     def resume(self):
-        self._paused = False
+        self.kontrol.devam_et()
 
     def toggle_pause(self):
         if self.running:
-            self._paused = not self._paused
-        return self._paused
+            self.kontrol.toggle_pause()
+        return self.kontrol.paused
 
     def stop(self):
-        self._stop = True
-        self._paused = False
+        self.kontrol.durdur()
         self._durum("Durduruluyor...")
 
     @property
     def paused(self):
-        return self._paused
+        return self.kontrol.paused
 
     def _bekle_devam(self):
-        """Duraklatma boyunca bekler; durdurulduysa False döner (orijinal)."""
-        while self._paused and not self._stop:
-            self._durum("⏸ Duraklatıldı")
-            time.sleep(0.3)
-        return not self._stop
+        """Duraklatma (ve karma modda sıra) boyunca bekler; durdurulduysa
+        False döner (orijinal davranış, artık paylaşılan TopluIsKontrolu ile)."""
+        return self.kontrol.nokta(lambda: self._durum("⏸ Duraklatıldı"))
 
     # ─────────────────────────── worker (orijinal _sorgu_worker birebir) ───────────────────────────
     def _worker(self, mode, secili):
+        KAYIT_DEFTERI.zorla_ekle(self.kontrol.ad, self.kontrol)
         motor = SorguMotoru(self.log)
         try:
             motor.baslat()
@@ -254,6 +258,8 @@ class SgkBatch:
             self.log(f"❌ Başlatma hatası: {e}")
             motor.kapat()
             self.running = False
+            self.kontrol.karmadan_cik()
+            KAYIT_DEFTERI.sil(self.kontrol.ad)
             return
 
         satirlar = list(self.satirlar)
@@ -281,13 +287,13 @@ class SgkBatch:
                 self.log(f"⏳ {MOLA_HATA_ESIGI} hata oluştu, sunucu yükünü azaltmak için "
                          f"{MOLA_SURESI} sn mola veriliyor...")
                 bekleyen = MOLA_SURESI
-                while bekleyen > 0 and not self._stop:
+                while bekleyen > 0 and not self.kontrol.durduruldu:
                     self._durum(f"⏳ Otomatik mola: {bekleyen} sn")
                     time.sleep(1)
                     bekleyen -= 1
-                if not self._stop:
+                if not self.kontrol.durduruldu:
                     self.log("▶ Molaya devam ediliyor.")
-            return not self._stop
+            return not self.kontrol.durduruldu
 
         for idx, r in enumerate(satirlar, 1):
             if not self._bekle_devam():
@@ -319,7 +325,7 @@ class SgkBatch:
                 if not oturum_yenilendi and oturum_yenile():
                     continue
                 self._oturum_dur()
-                self._stop = True
+                self.kontrol.durdur()
                 break
             except Exception as e:
                 self._yaz_hepsi(r, gereken, offset, secili, f"{HATA_ON} arama: {e}")
@@ -347,7 +353,7 @@ class SgkBatch:
                 if not oturum_yenilendi and oturum_yenile():
                     continue
                 self._oturum_dur()
-                self._stop = True
+                self.kontrol.durdur()
                 break
             except Exception as e:
                 self._yaz_hepsi(r, gereken, offset, secili, f"{HATA_ON} borçlu: {e}")
@@ -374,14 +380,15 @@ class SgkBatch:
             if sparse:
                 self._apply_sonuc(r, sparse, secili)
 
-            if self._stop:
+            self.kontrol.tur_bitti()
+            if self.kontrol.durduruldu:
                 break
             if idx % 10 == 0:
                 self.save()
             time.sleep(SATIR_ARASI_BEKLEME)
 
         self.save()
-        if self._stop:
+        if self.kontrol.durduruldu:
             self._durum("Durduruldu")
             self.log("⏹ Durduruldu.")
         else:
@@ -389,6 +396,8 @@ class SgkBatch:
             self.log("🎉 İşlem tamamlandı.")
         motor.kapat()
         self.running = False
+        self.kontrol.karmadan_cik()
+        KAYIT_DEFTERI.sil(self.kontrol.ad)
 
     # ─────────────────────────── sonuç yazımı (orijinal _kuyruk_isle eşi) ───────────────────────────
     def _apply_sonuc(self, r, sparse, secili):
@@ -483,7 +492,7 @@ class SgkBatch:
                 rows.append({"r": r, "values": st["base"] + st["results"], "tag": st["tag"]})
         return {
             "running": self.running,
-            "paused": self._paused,
+            "paused": self.kontrol.paused,
             "status": self.status_text,
             "rev": self.rev,
             "log_n": log_n,

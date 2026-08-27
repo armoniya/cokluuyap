@@ -9,8 +9,10 @@ gösterir (liste ise tablo, değilse JSON metni). Her üretilen modül için AYR
 dosyası YOK — hepsi bu tek bileşenle çalışır.
 """
 
+import inspect
 import json
 import re
+import sys
 import threading
 import importlib
 import os
@@ -18,6 +20,15 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from theme import C, RoundButton
+
+# BARE (paket-göreli DEĞİL) — toplu_is_kontrol/toplu_is_dialog'un TÜM
+# tüketicilerde AYNI tekil (KAYIT_DEFTERI) nesneyi görmesi için şart: bu iki
+# modül HER YERDE bare import edilir (bkz. toplu_is_kontrol.py başlığı).
+_HERE_TIK = os.path.dirname(os.path.abspath(__file__))
+if _HERE_TIK not in sys.path:
+    sys.path.insert(0, _HERE_TIK)
+import toplu_is_kontrol  # noqa: E402
+import toplu_is_dialog as _tid  # noqa: E402
 
 # Üretilen modül adı için KATI desen (güvenlik raporu #11): tek parça python tanımlayıcısı.
 # Nokta/slash/".." içeremez → paket-kaçışı (modules.os gibi) ve yol-gezinmesi engellenir.
@@ -47,6 +58,7 @@ class UretilmisRunner:
         self.core_modul = core_modul
         self.baslik = baslik or core_modul
         self._calisiyor = False
+        self.kontrol = toplu_is_kontrol.TopluIsKontrolu(ad=self.baslik)
         self._entries = {}
         self._core = None
         self._hata = None
@@ -136,12 +148,44 @@ class UretilmisRunner:
                                       fg=C.INK_FAINT, font=self.app.f_small)
             self.dosya_lbl.pack(side="left", padx=(12, 0))
 
+        # ── (opsiyonel) çıktı klasörü seçimi (core.KLASOR_GIRDI varsa) ──
+        # Modül KLASOR_GIRDI = {"etiket"} bildirirse bir klasör seçici çıkar;
+        # EXCEL_GIRDI fonksiyonu (dosya, klasor, log_fn=...) biçiminde çağrılır
+        # (klasor seçilmemişse None geçer — modül kendi varsayılanını kullanır).
+        self._klasor_girdi = getattr(self._core, "KLASOR_GIRDI", None)
+        self._secili_klasor = None
+        if self._klasor_girdi:
+            kx = tk.Frame(wrap, bg=C.BG)
+            kx.pack(fill="x", pady=(8, 0))
+            tk.Label(kx, text=str(self._klasor_girdi.get("etiket", "Çıktı klasörü")) + ":",
+                     bg=C.BG, fg=C.INK_SOFT, font=self.app.f_small,
+                     width=26, anchor="w").pack(side="left")
+            self.klasor_sec_btn = RoundButton(kx, "Klasör Seç…", command=self._klasor_sec,
+                                              kind="ghost", font=self.app.f_nav_b, height=32)
+            self.klasor_sec_btn.pack(side="left")
+            self.klasor_lbl = tk.Label(kx, text="(seçilmezse Excel yanında oluşturulur)",
+                                       bg=C.BG, fg=C.INK_FAINT, font=self.app.f_small)
+            self.klasor_lbl.pack(side="left", padx=(12, 0))
+
         # ── araç çubuğu ──
         bar = tk.Frame(wrap, bg=C.BG)
         bar.pack(fill="x", pady=(12, 0))
         self.calistir_btn = RoundButton(bar, "Çalıştır", command=self.calistir,
                                         kind="primary", font=self.app.f_nav_b, height=36)
         self.calistir_btn.pack(side="left", ipadx=6)
+        # Duraklat/Durdur yalnız Excel/toplu modda (EXCEL_GIRDI) anlamlıdır —
+        # tekil sorgu modunda gösterilmez.
+        self.duraklat_btn = None
+        self.durdur_btn = None
+        if self._excel_girdi:
+            self.duraklat_btn = RoundButton(bar, "Duraklat", command=self.duraklat_toggle,
+                                            kind="ghost", font=self.app.f_nav_b, height=36)
+            self.duraklat_btn.pack(side="left", padx=(8, 0), ipadx=2)
+            self.duraklat_btn.set_state("disabled")
+            self.durdur_btn = RoundButton(bar, "Durdur", command=self.durdur,
+                                          kind="ghost", font=self.app.f_nav_b, height=36)
+            self.durdur_btn.pack(side="left", padx=(8, 0), ipadx=2)
+            self.durdur_btn.set_state("disabled")
         self.durum_lbl = tk.Label(bar, text="", bg=C.BG, fg=C.INK_SOFT, font=self.app.f_small)
         self.durum_lbl.pack(side="right")
 
@@ -188,24 +232,59 @@ class UretilmisRunner:
             self._secili_dosya = yol
             self.dosya_lbl.config(text=os.path.basename(yol), fg=C.INK)
 
+    def _klasor_sec(self):
+        yol = filedialog.askdirectory(title="Çıktı klasörü seç")
+        if yol:
+            self._secili_klasor = yol
+            self.klasor_lbl.config(text=yol, fg=C.INK)
+
     # ─────────────────────────── çalıştır ───────────────────────────
     def calistir(self):
         if self._calisiyor:
             return
         # Dosya seçiliyse Excel/toplu modu, değilse normal tek-girdi modu.
         excel_modu = bool(self._excel_girdi and self._secili_dosya)
+        if not excel_modu:
+            self._gercek_calistir(excel_modu=False)
+            return
+        akis = _tid.basvur_ile_cakisma_akisi(self.app, self.kontrol.ad, self.kontrol)
+        if akis == "iptal":
+            return
+        if akis == "sirada":
+            self.durum_lbl.config(text="Sırada bekliyor…")
+            _tid.sira_bekle_ve_baslat(
+                self.app, self.kontrol.ad, self.kontrol,
+                lambda: self._gercek_calistir(excel_modu=True),
+                durum_fn=lambda t: self.durum_lbl.config(text=t))
+            return
+        self._gercek_calistir(excel_modu=True)
+
+    def _gercek_calistir(self, excel_modu):
         girdi = {p: e.get() for p, e in self._entries.items()}
         dosya = self._secili_dosya
         self._calisiyor = True
+        self._son_excel_modu = excel_modu
         self.calistir_btn.set_state("disabled")
         self.durum_lbl.config(text="Çalışıyor…")
+        if excel_modu:
+            self.kontrol.sifirla()
+            if self.duraklat_btn is not None:
+                self.duraklat_btn.set_state("normal")
+                self.duraklat_btn.set_text("Duraklat")
+                self.durdur_btn.set_state("normal")
 
         def isi():
             try:
                 if excel_modu:
                     fn_adi = self._excel_girdi.get("fonksiyon", "excel_isle")
                     fn = getattr(self._core, fn_adi)
-                    sonuc = fn(dosya, log_fn=self._log)
+                    ekstra = {}
+                    if "kontrol" in inspect.signature(fn).parameters:
+                        ekstra["kontrol"] = self.kontrol
+                    if self._klasor_girdi:
+                        sonuc = fn(dosya, self._secili_klasor, log_fn=self._log, **ekstra)
+                    else:
+                        sonuc = fn(dosya, log_fn=self._log, **ekstra)
                 else:
                     sonuc = self._core.calistir(girdi, self._log)
                 self.app.after(0, lambda: self._bitti(sonuc))
@@ -215,9 +294,27 @@ class UretilmisRunner:
 
         threading.Thread(target=isi, daemon=True).start()
 
-    def _bitti(self, sonuc):
+    def duraklat_toggle(self):
+        if not self._calisiyor:
+            return
+        paused = self.kontrol.toggle_pause()
+        self.duraklat_btn.set_text("Devam" if paused else "Duraklat")
+
+    def durdur(self):
+        if self._calisiyor:
+            self.kontrol.durdur()
+
+    def _calisma_bitti_ui(self):
         self._calisiyor = False
         self.calistir_btn.set_state("normal")
+        if getattr(self, "_son_excel_modu", False) and self.duraklat_btn is not None:
+            self.duraklat_btn.set_state("disabled")
+            self.duraklat_btn.set_text("Duraklat")
+            self.durdur_btn.set_state("disabled")
+            toplu_is_kontrol.KAYIT_DEFTERI.sil(self.kontrol.ad)
+
+    def _bitti(self, sonuc):
+        self._calisma_bitti_ui()
         if isinstance(sonuc, dict) and sonuc.get("_hata"):
             self.durum_lbl.config(text="Hata")
             self._sonuc_bos(f"Hata: {sonuc.get('_hata')}")
@@ -225,8 +322,7 @@ class UretilmisRunner:
         self._goster_sonuc(sonuc)
 
     def _hata_goster(self, e):
-        self._calisiyor = False
-        self.calistir_btn.set_state("normal")
+        self._calisma_bitti_ui()
         self.durum_lbl.config(text="Hata")
         self._log(f"❌ {e}")
         messagebox.showerror("Hata", str(e))

@@ -28,6 +28,24 @@ UYARI: kesintisiz bireysel yazma akışında toplu iş teorik olarak uzun süre 
 (starvation). Ürün gereksinimi "bireysel kullanıcı toplu işten etkilenmesin" yönünde
 olduğundan bu kabul edilmiştir; gerekirse ileride batch'e bir taban ilerleme garantisi
 eklenebilir.
+
+── X-Uyap-Read (adil sıralama) ARTIK KİLİDİ HİÇ ATLAMAZ ─────────────────────────────────
+Eskiden "okuma-ipuçlu" (X-Uyap-Read) POST'lar — durum DEĞİŞTİRMEYEN sorgular, ör. icra/SGK
+dosya sorgusu — yazma kilidine HİÇ girmiyordu ("salt okuma, kilit gerekmez" varsayımıyla).
+Bu varsayım YANLIŞ çıktı: UYAP tek oturumda aynı anda ikinci bir isteği REDDEDİYOR — yazma
+mı okuma mı olduğuna bakmaksızın ("Eş zamanlı olarak birden fazla sorgulama yapamazsınız!"
+— kullanıcı bulgusu, 2026-07-12, canlı yakalanan hata metni: bkz. Panel/Eşzamanlı hata
+metni.txt; ör. arka plandaki 30dk'lık otomatik senkron turu ile elle basılan "Yenile" aynı
+anda UYAP'a gidince ikincisi reddediliyordu). docs/CIOK_YARGI_TURU_SENKRON_PLANI.md'deki
+"bilinen sınırlama" notu bu riski yalnız DB yazma çakışması (upsert güvenli) olarak
+değerlendirmişti — UYAP'ın oturum başına TEK isteği bile reddettiğini hesaba katmamıştı.
+
+Çözüm: okuma-ipuçlu POST'lar artık SIRADAN bireysel istek gibi `interactive_write()`'a
+girer (bkz. `is_read_hint` — hâlâ ayrıştırılabiliyor ama artık kilitleme kararını
+ETKİLEMİYOR, yalnız belgesel/geriye-uyumlu). Bu, HEM aralarında HEM gerçek yazmalarla
+doğru sırayı sağlar (tek UYAP_WRITE_LOCK) HEM DE adalet amacını korur: bireysel bir sorgu
+yine toplu işin (batch_write) arkasında beklemez, tam tersi toplu iş bireysel isteğe yol
+verir (yukarıdaki ADİL DAĞITIM bölümü).
 """
 
 import asyncio
@@ -76,13 +94,13 @@ async def batch_write():
         yield
 
 
-# ── İstemci "okuma ipucu" başlığı (adil sıralama) ──────────────────────────────────────────
-# Bazı UYAP sorguları durum DEĞİŞTİRMEZ (yalnızca okur) ama UYAP onları POST ile yaptırır
-# (ör. icra/SGK dosya sorgusu). Varsayılan sınıflandırma POST'u "yazma" sayıp yüksek öncelikli
-# yazma kilidine sokar; toplu bir sorgu (binlerce dosya) bu kilidi sürekli tutarsa DİĞER
-# kullanıcıların bireysel istekleri kuyrukta bekler. İstemci böyle bir POST'u bu başlıkla
-# "beni okuma say, kilide sokma" diye işaretleyebilir (jobs tarafındaki write=False'un
-# proxy/tünel-tarafı karşılığı). Bilinmeyen başlık eski ofislerce yok sayılır → geriye uyumlu.
+# ── İstemci "okuma ipucu" başlığı — ARTIK YALNIZ BELGESEL, bkz. modül docstring'i ────────
+# Eskiden bu başlıklı POST'lar yazma kilidine hiç girmiyordu; UYAP'ın eşzamanlı HİÇBİR
+# isteği (yazma/okuma fark etmeksizin) kabul etmediği anlaşıldığından (kullanıcı bulgusu,
+# 2026-07-12) artık `is_read_hint` sonucu kilitleme kararını ETKİLEMİYOR — tüm POST/PUT/
+# PATCH/DELETE `interactive_write()`'a girer. Fonksiyon yine de tutuldu: çağıranlar (ör.
+# icra_core.py'nin gönderdiği başlık) geriye uyumlu kalsın, ileride farklı bir amaçla
+# (ör. günlükleme/telemetri) yeniden kullanılabilsin diye.
 READ_HINT_HEADER = "x-uyap-read"
 
 

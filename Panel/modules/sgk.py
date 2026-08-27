@@ -10,11 +10,21 @@ bu panel yalnızca onu sürer ve sonuçları sakin bir tabloda gösterir. UYAP
 istekleri yine 127.0.0.1:8800 ofis proxy'sine gider (UYAP Bağlantısı açık olmalı).
 """
 
+import os
+import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from theme import C, RoundButton
 from . import sgk_core
+
+# BARE (paket-göreli DEĞİL) — toplu_is_kontrol/toplu_is_dialog'un TÜM
+# tüketicilerde AYNI tekil (KAYIT_DEFTERI) nesneyi görmesi için şart: bu iki
+# modül HER YERDE bare import edilir (bkz. toplu_is_kontrol.py başlığı).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import toplu_is_dialog as _tid  # noqa: E402
 
 
 class SgkPanel:
@@ -262,9 +272,23 @@ class SgkPanel:
         if not secili:
             messagebox.showinfo("Bilgi", "En az bir sorgu sütunu seçin.")
             return
+        akis = _tid.basvur_ile_cakisma_akisi(self.app, self.batch.kontrol.ad, self.batch.kontrol)
+        if akis == "iptal":
+            return
+        if akis == "sirada":
+            self.durum_lbl.config(text="Sırada bekliyor…")
+            _tid.sira_bekle_ve_baslat(
+                self.app, self.batch.kontrol.ad, self.batch.kontrol,
+                lambda: self._gercek_baslat(mode, secili),
+                durum_fn=lambda t: self.durum_lbl.config(text=t))
+            return
+        self._gercek_baslat(mode, secili)
+
+    def _gercek_baslat(self, mode, secili):
         if not self.batch.start(mode, secili):
             if mode == "retry":
                 messagebox.showinfo("Bilgi", "Tekrar denenecek hatalı hücre yok.")
+            _tid.KAYIT_DEFTERI.sil(self.batch.kontrol.ad)
             return
         self._set_running(True)
 

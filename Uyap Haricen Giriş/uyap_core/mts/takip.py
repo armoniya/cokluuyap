@@ -21,6 +21,8 @@ import re as _re
 import asyncio
 import urllib.parse
 
+import httpx
+
 from .models import (
     kalemleri_birlestir, parse_amount, format_date_with_slashes, tr_to_ascii,
 )
@@ -32,27 +34,57 @@ class DosyaAtla(Exception):
     pass
 
 
+# Bağlantı seviyesinde geçici hatalar (kullanıcı bulgusu, 2026-08-11): UYAP'a giden TCP
+# bağlantısı istek gönderildikten SONRA, yanıt henüz okunmadan kopabiliyor (ör. ofis-UYAP
+# arası ağ sıçraması, ya da yeniden kullanılan keep-alive bağlantının UYAP tarafından tam
+# o anda kapatılması) — httpx bunu ReadError/RemoteProtocolError olarak fırlatıyor. SORGU
+# uçlarında (prepare() — hiçbir şey OLUŞTURMAZ) 1 kez otomatik tekrar denemek güvenlidir.
+_TRANSIENT_ERRORS = (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError,
+                     httpx.WriteError, httpx.PoolTimeout)
+
+
 # ── UYAP istek yardımcıları (ctx.uyap üzerinden) ──────────────────────────────
-async def _api_text(ctx, path, payload=None, multipart=False):
+async def _api_text(ctx, path, payload=None, multipart=False, retry=True):
     """UYAP'a POST atıp yanıt gövdesini metin döndürür (orijinal call_uyap_api eşdeğeri).
 
     multipart=True: FormData davranışı — dict/list alanlar JSON string'e çevrilip
-    (None, deger) form alanı olarak gider; httpx multipart/form-data kurar."""
-    if multipart:
-        files = {
-            k: (None, json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v))
-            for k, v in (payload or {}).items()
-        }
-        resp = await ctx.uyap("POST", path, files=files)
-    else:
-        resp = await ctx.uyap("POST", path, json=(payload if payload is not None else {}))
+    (None, deger) form alanı olarak gider; httpx multipart/form-data kurar.
+
+    retry=True (varsayılan): bağlantı, yanıt okunmadan koparsa (bkz. _TRANSIENT_ERRORS)
+    kısa bir bekleyişle 1 kez tekrar dener — yalnız durum DEĞİŞTİRMEYEN sorgu uçları için
+    güvenlidir. Bir taslak/kayıt OLUŞTURAN çağrılarda (ör. mtsTakipTalebiOlustur_brd.ajx)
+    retry=False verilmeli: ilk istek aslında UYAP'a ulaşmış ama yanıtı okurken bağlantı
+    koptuysa, tekrar denemek YİNELENEN bir kayıt oluşturabilir."""
+    async def _send():
+        if multipart:
+            files = {
+                k: (None, json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else str(v))
+                for k, v in (payload or {}).items()
+            }
+            return await ctx.uyap("POST", path, files=files)
+        return await ctx.uyap("POST", path, json=(payload if payload is not None else {}))
+
+    try:
+        resp = await _send()
+    except _TRANSIENT_ERRORS as e:
+        if not retry:
+            raise
+        ctx.log(f"UYAP bağlantı hatası ({type(e).__name__}: {e or 'mesaj yok'}), "
+                f"tekrar deneniyor: {path}")
+        await asyncio.sleep(1.5)
+        resp = await _send()
+
     if resp.status_code >= 400:
-        raise ValueError(f"UYAP '{path}' HTTP {resp.status_code} döndürdü.")
+        govde = (resp.text or "").strip()
+        if len(govde) > 500:
+            govde = govde[:500] + "…"
+        raise ValueError(f"UYAP '{path}' HTTP {resp.status_code} döndürdü."
+                          + (f" Yanıt gövdesi: {govde}" if govde else ""))
     return resp.text
 
 
-async def _api_json(ctx, path, payload=None, multipart=False):
-    return json.loads(await _api_text(ctx, path, payload, multipart))
+async def _api_json(ctx, path, payload=None, multipart=False, retry=True):
+    return json.loads(await _api_text(ctx, path, payload, multipart, retry))
 
 
 # ── Alacak kalemi JSON kurucu (orijinal _kalem_dict) ──────────────────────────
@@ -380,10 +412,12 @@ async def finalize(ctx, takip, state, *, vekalet=None, dayanak=None):
                           "birimAd": selected_adliye.get("adliyeIsmi")}
     }
     log(f"[{takip.dosya_no}] UYAP'ta taslak oluşturuluyor...")
+    # retry=False: bağlantı yanıt okunurken koparsa, ilk istek UYAP'a ULAŞMIŞ olabilir —
+    # otomatik tekrar YİNELENEN bir taslak oluşturabilir (bkz. _api_text docstring).
     taslak = await _api_json(ctx, "mtsTakipTalebiOlustur_brd.ajx", {
         "MTS": "1", "ilamsizList": ilamsiz_list, "tarafList": taraf_list,
         "MTSHarcBilgileri": harc_bilgileri, "MTSDosyaBilgileri": dosya_bilgileri,
-    }, multipart=True)
+    }, multipart=True, retry=False)
     dosya_id = taslak.get("dosyaId")
     if not dosya_id:
         raise ValueError(f"UYAP taslak oluşturamadı. Yanıt: {taslak}")
@@ -391,65 +425,328 @@ async def finalize(ctx, takip, state, *, vekalet=None, dayanak=None):
         dosya_id = dosya_id.strip().strip('"').strip("'")
     log(f"[{takip.dosya_no}] Taslak oluşturuldu. Dosya ID: {dosya_id}")
 
-    # 11) UDF taslağını indir (GET) — canlı oturum üzerinden, diske gerek yok
-    resp = await ctx.uyap("GET", "mtsTakipTalebiHazirla_brd.avukat",
-                          params={"dosyaId": dosya_id}, write=False)
-    if resp.status_code >= 400:
-        raise ValueError(f"UDF indirilemedi (HTTP {resp.status_code}).")
-    if "text/html" in (resp.headers.get("content-type", "").lower()):
-        raise ValueError("UDF yerine HTML döndü (oturum/erişim sorunu).")
-    udf_bytes = resp.content
-    if not udf_bytes:
-        raise ValueError("UDF taslağı boş indi.")
-
-    # Güvenli dosya adı (borçlu + abone)
-    _b0 = takip.borclular[0] if takip.borclular else None
-    _abone = (takip.abone_no or takip.hizmet_abone_no or "").strip()
-    if _b0:
-        _prefix = f"{_b0.ad}_{_b0.soyad}_{_abone}" if _abone else f"{_b0.ad}_{_b0.soyad}"
-    else:
-        _prefix = _abone or "UYAP_takip"
-    guvenli_isim = tr_to_ascii(_prefix) + ".udf"
-
-    # 12) Headless e-imza (kart PIN/sertifika canlı oturumdan)
-    log(f"[{takip.dosya_no}] Takip talebi e-imzalanıyor (headless)...")
-    cert_id = getattr(gw, "cert_id", None)
-    pin = getattr(getattr(gw, "login_args", None), "pin", None)
-    loop = asyncio.get_running_loop()
-    signed = await loop.run_in_executor(
-        None, udf_signer.sign_document, udf_bytes, guvenli_isim, cert_id, pin)
-    log(f"[{takip.dosya_no}] İmzalandı ({len(signed)} bayt).")
-
-    # 13) Evrakları programatik gönder (imzalı UDF + vekalet + dayanak)
-    evraklar = [{"tur": "ICR_TAKIP_TLP", "filename": guvenli_isim, "bytes": signed}]
-    if vekalet and vekalet.get("bytes"):
-        evraklar.append({"tur": "CZM_VEKALETNAME",
-                         "filename": vekalet.get("filename") or "vekalet.pdf",
-                         "bytes": vekalet["bytes"]})
-    else:
-        log(f"[{takip.dosya_no}] ⚠️ Vekaletname yok — gönderilmiyor (UYAP reddedebilir).")
-    if dayanak and dayanak.get("bytes"):
-        evraklar.append({"tur": "MTS_TAKIBIN_DAYANAGI",
-                         "filename": dayanak.get("filename") or "dayanak.pdf",
-                         "bytes": dayanak["bytes"]})
-    else:
-        log(f"[{takip.dosya_no}] ⚠️ Dayanak belge yok — gönderilmiyor (UYAP reddedebilir).")
-
-    items_json, alanlar = items_kur(evraklar)
-    files = {}
-    for (alan, fname), ev in zip(alanlar, evraklar):
-        files[alan] = (fname, ev["bytes"], mime_belirle(fname))
-    files["items"] = (None, items_json)
-    files["dosyaId"] = (None, dosya_id)
-
-    log(f"[{takip.dosya_no}] Evraklar gönderiliyor ({len(alanlar)} adet)...")
-    ev_resp = await ctx.uyap("POST", "davaAcilisEvrakGonderme_brd.ajx", files=files)
+    # UDF indir / imzala / evrak gönder (11-13) BURADAN sonra patlarsa, taslak UYAP'ta
+    # ZATEN AÇIK (dosya_id var) ve TEKRAR bu iş çalıştırılırsa YENİ bir taslak/mükerrer
+    # kayıt oluşur. O yüzden dosya_id'yi hata mesajına GÖM (kullanıcı kaybetmesin, UYAP'ta
+    # 'Tamamlanmayan Dosyalar' ekranından bulup elle devam etsin) — bkz. kullanıcı bulgusu
+    # 2026-08-11 (evrak gönderirken ReadError, dosya_id log'da görünse de sonuçta hiç
+    # dönmüyordu).
     try:
-        sonuc = json.loads(ev_resp.text) if ev_resp.text else {}
-    except Exception:
-        sonuc = {"type": "unknown", "message": ev_resp.text}
-    if not isinstance(sonuc, dict) or sonuc.get("type") != "success":
-        raise ValueError(f"Evrak gönderme başarısız. UYAP yanıtı: {sonuc}")
-    log(f"[{takip.dosya_no}] ✓ Tüm evraklar gönderildi. Takip tamamlandı.")
+        # 11) UDF taslağını indir (GET) — canlı oturum üzerinden, diske gerek yok
+        resp = await ctx.uyap("GET", "mtsTakipTalebiHazirla_brd.avukat",
+                              params={"dosyaId": dosya_id}, write=False)
+        if resp.status_code >= 400:
+            raise ValueError(f"UDF indirilemedi (HTTP {resp.status_code}).")
+        if "text/html" in (resp.headers.get("content-type", "").lower()):
+            raise ValueError("UDF yerine HTML döndü (oturum/erişim sorunu).")
+        udf_bytes = resp.content
+        if not udf_bytes:
+            raise ValueError("UDF taslağı boş indi.")
 
+        # Güvenli dosya adı (borçlu + abone)
+        _b0 = takip.borclular[0] if takip.borclular else None
+        _abone = (takip.abone_no or takip.hizmet_abone_no or "").strip()
+        if _b0:
+            _prefix = f"{_b0.ad}_{_b0.soyad}_{_abone}" if _abone else f"{_b0.ad}_{_b0.soyad}"
+        else:
+            _prefix = _abone or "UYAP_takip"
+        guvenli_isim = tr_to_ascii(_prefix) + ".udf"
+
+        # 12) Headless e-imza (kart PIN/sertifika canlı oturumdan)
+        log(f"[{takip.dosya_no}] Takip talebi e-imzalanıyor (headless)...")
+        cert_id = getattr(gw, "cert_id", None)
+        pin = getattr(getattr(gw, "login_args", None), "pin", None)
+        loop = asyncio.get_running_loop()
+        signed = await loop.run_in_executor(
+            None, udf_signer.sign_document, udf_bytes, guvenli_isim, cert_id, pin)
+        log(f"[{takip.dosya_no}] İmzalandı ({len(signed)} bayt).")
+
+        # 13) Evrakları programatik gönder (imzalı UDF + vekalet + dayanak)
+        evraklar = [{"tur": "ICR_TAKIP_TLP", "filename": guvenli_isim, "bytes": signed}]
+        if vekalet and vekalet.get("bytes"):
+            evraklar.append({"tur": "CZM_VEKALETNAME",
+                             "filename": vekalet.get("filename") or "vekalet.pdf",
+                             "bytes": vekalet["bytes"]})
+        else:
+            log(f"[{takip.dosya_no}] ⚠️ Vekaletname yok — gönderilmiyor (UYAP reddedebilir).")
+        if dayanak and dayanak.get("bytes"):
+            evraklar.append({"tur": "MTS_TAKIBIN_DAYANAGI",
+                             "filename": dayanak.get("filename") or "dayanak.pdf",
+                             "bytes": dayanak["bytes"]})
+        else:
+            log(f"[{takip.dosya_no}] ⚠️ Dayanak belge yok — gönderilmiyor (UYAP reddedebilir).")
+
+        items_json, alanlar = items_kur(evraklar)
+        files = {}
+        for (alan, fname), ev in zip(alanlar, evraklar):
+            files[alan] = (fname, ev["bytes"], mime_belirle(fname))
+        files["items"] = (None, items_json)
+        files["dosyaId"] = (None, dosya_id)
+
+        log(f"[{takip.dosya_no}] Evraklar gönderiliyor ({len(alanlar)} adet)...")
+        # BİLEREK retry yok: yanıtı okurken bağlantı koparsa evrak UYAP'a ULAŞMIŞ olabilir,
+        # körlemesine tekrar denemek MÜKERRER evrak yükleyebilir.
+        ev_resp = await ctx.uyap("POST", "davaAcilisEvrakGonderme_brd.ajx", files=files)
+        try:
+            sonuc = json.loads(ev_resp.text) if ev_resp.text else {}
+        except Exception:
+            sonuc = {"type": "unknown", "message": ev_resp.text}
+        if not isinstance(sonuc, dict) or sonuc.get("type") != "success":
+            raise ValueError(f"Evrak gönderme başarısız. UYAP yanıtı: {sonuc}")
+    except Exception as e:
+        raise RuntimeError(
+            f"Taslak ZATEN OLUŞTU (Dosya ID: {dosya_id}) ama evrak gönderilene kadar hata "
+            f"oluştu: {type(e).__name__}: {e}. UYAP'ta 'Tamamlanmayan Dosyalar' ekranından bu "
+            "dosyayı bulup evrak durumunu kontrol edin/elle tamamlayın — bu takibi TEKRAR "
+            "açmayın, mükerrer taslak oluşturur."
+        ) from e
+    log(f"[{takip.dosya_no}] ✓ Tüm evraklar gönderildi. Dosya AÇIK (henüz ödenmedi).")
+
+    # Ödeme ve tebligat BURADA OTOMATİK yürümez: kullanıcı bunları panelden aç/kapa +
+    # onay modu (yok/tek_tek/toplu) ile ayrı ayrı seçer (bkz. job_handlers._coklu_takip_ac,
+    # params.odeme_aktif/odeme_onay_modu/tebligat_aktif/tebligat_onay_modu). finalize()
+    # yalnızca dosyayı açar; _odeme_yap/_tebligat_gonder o orkestrasyon tarafından,
+    # kullanıcının onayından SONRA çağrılır.
     return {"dosya_id": dosya_id, "evrak_sonuc": sonuc}
+
+
+# ── Harç ödeme (mtsDavaAcilis_brd.ajx) ────────────────────────────────────────
+# 2026-08-11 CANLI DENEME #1 ve #2 BAŞARISIZ: yanlış uç nokta kullanılıyordu
+# (davaAcilisOdemeIslemleri_brd.ajx, kisiKurumId + harcMasrafList + vakifbankHesapBilgileri
+# gibi bir sürü alanla). Bu uç nokta her ikisinde de yalnızca ₺164'lük 'Vekalet Pulu'yu
+# işledi, ₺836'lık asıl harcı (MTS Harcı 732 + Vekalet Suret Harcı 104) hiç işlemedi,
+# dosya numarasız kaldı — toplam ₺328 gerçek para kaybı.
+# DÜZELTME #1 (2026-08-11, ilk capture analizine dayanarak, CANLI DOĞRULANMADAN):
+# uç nokta "mtsDavaAcilis.ajx" (brd'siz) olarak yazılmıştı. HARC_ODEME_AKTIF açılıp
+# canlı denendiğinde bu isim YANLIŞ çıktı ('hatalı işlem').
+# DÜZELTME #2 (2026-08-11, kullanıcının Chrome DevTools ile yakaladığı GERÇEK manuel
+# ödeme XHR trafiğiyle doğrulandı — dosya no 2026/899210): UYAP'ın kendi arayüzü
+# ödeme için mtsDavaAcilis_BRD.ajx (SONUNDA _brd VAR) uç noktasını kullanıyor, payload
+# SADECE
+#   {"dosyaId": "<HAM dosyaId, iç içe tırnak karakterleri dahil>", "odemeTipi": "7"}
+# Hiçbir harç kalemi/kisiKurumId istemciden gönderilmiyor — sunucu dosyaId'ye bağlı TÜM
+# harcı (MTS Harcı + Vekalet Suret Harcı + Vekalet Pulu) kendi hesaplayıp tahsil ediyor.
+# Yanıt doğrudan gerçek esas no'yu da içeriyor: {"dosyaNo":"2026/899210","dosyaYil":2026,...}
+# — bu, odenmis_dosyalari_bul()'daki ad-soyad eşleştirmesinden daha güvenilir bir kaynak
+# olabilir (ayrı bir iyileştirme konusu, bkz. _odeme_yap içindeki not).
+# ÖNEMLİ: dosyaId, UYAP'ın döndürdüğü HAM haliyle (iç içe tırnak karakterleri korunarak)
+# gönderilmeli; finalize()'daki temizlenmiş (tırnaksız) dosya_id burada tekrar
+# tırnaklanıyor (bkz. aşağıdaki _odeme_yap).
+# Uç nokta adı artık gerçek trafikle doğrulandı VE 2026-08-11 canlı denemede uçtan
+# uca doğrulandı (dosya no 2026/899210 gerçekten açıldı). Bu fonksiyonun ÇAĞRILIP
+# ÇAĞRILMAYACAĞI artık burada bir sabitle değil, job_handlers._coklu_takip_ac'a
+# geçirilen params.odeme_aktif (panelden kullanıcının aç/kapa yaptığı) ile belirlenir —
+# bkz. o dosyadaki orkestrasyon.
+async def _odeme_yap(ctx, takip, dosya_id, state):
+    """MTS harcını öder (mtsDavaAcilis_brd.ajx). Yanıt JSON'ı doğrudan gerçek esas no'yu
+    ("dosyaNo": "2026/899210") ve ödeme sonrası UYAP'ın verdiği YENİ opak dosyaId'yi içerir
+    (UYAP dosya durumu değiştikçe token'ı yeniliyor — bkz. yukarıdaki uç nokta notu). Bu
+    yanıttan ayrıştırma başarısız olursa (beklenmeyen şekil), eski yönteme —
+    odenmis_dosyalari_bul() ile ad-soyad eşleştirmesine— düşülür.
+    Dönüş: {"odeme_sonuc": str, "gercek_dosya_no": str|None, "dosya_id": str} — "dosya_id",
+    ödeme yanıtı yeni bir token içeriyorsa GÜNCEL değer, yoksa girdi dosya_id'nin aynısıdır."""
+    log = ctx.log
+    # UYAP dosyaId'leri HAM halinde (iç içe tırnak karakterleri dahil) bekliyor;
+    # finalize() dosya_id'yi temizleyip (tırnaksız) sakladığı için burada geri tırnaklanıyor.
+    dosya_id_ham = dosya_id if (isinstance(dosya_id, str) and dosya_id.startswith('"')) else f'"{dosya_id}"'
+    log(f"[{takip.dosya_no}] Harç ödemesi gönderiliyor (e-Barobirlik kart, mtsDavaAcilis_brd.ajx)...")
+    odeme_sonuc = await _api_text(ctx, "mtsDavaAcilis_brd.ajx", {
+        "dosyaId": dosya_id_ham, "odemeTipi": "7",
+    })
+    log(f"[{takip.dosya_no}] ✓ Harç ödemesi tamamlandı.")
+
+    guncel_dosya_id = dosya_id
+    gercek_dosya_no = None
+    try:
+        odeme_json = json.loads(odeme_sonuc)
+    except Exception:
+        odeme_json = None
+    if isinstance(odeme_json, dict):
+        dn = str(odeme_json.get("dosyaNo") or "").strip()
+        if _ESAS_NO_DESENI.match(dn):
+            gercek_dosya_no = dn
+        yeni_id = odeme_json.get("dosyaId")
+        if isinstance(yeni_id, str) and yeni_id.strip():
+            guncel_dosya_id = yeni_id.strip()
+
+    if not gercek_dosya_no:
+        try:
+            eslesme = await odenmis_dosyalari_bul(ctx, [takip])
+            gercek_dosya_no = eslesme.get(str(takip.dosya_no))
+        except Exception as e:
+            log(f"[{takip.dosya_no}] ⚠️ Ödeme sonrası esas no doğrulanamadı: {e}")
+    if gercek_dosya_no:
+        log(f"[{takip.dosya_no}] ✓ MTS dosyası açıldı: {gercek_dosya_no}")
+    else:
+        log(f"[{takip.dosya_no}] ⚠️ Ödeme yapıldı ama esas no 'Tamamlanmayan Dosyalar' "
+            "listesinde henüz bulunamadı — UYAP'tan elle doğrulayın.")
+    return {"odeme_sonuc": odeme_sonuc, "gercek_dosya_no": gercek_dosya_no, "dosya_id": guncel_dosya_id}
+
+
+# ── Tebligat gönderme (mtsTarafTebligatList_brd.ajx → mernis adres → mtsTebligatUcreti_brd.ajx
+# → MtsTebligatGonder_brd.ajx) ────────────────────────────────────────────────
+# 2026-08-11: Kullanıcının Chrome DevTools ile yakaladığı GERÇEK manuel tebligat gönderme
+# XHR trafiğine dayanır (dosya no 2026/898949, borçlu AYŞE YUNUSOĞLU, kisiKurumId 85013687,
+# ücret 317.20 TL). Akış:
+#   1) mtsTarafTebligatList_brd.ajx {"dosyaId": <ham>} → tebligat bekleyen taraf listesi
+#      (her taraf: tarafTebligatDVO.hasTebligatEvrak, evrakKisiDVO.guncelKisiKurumId, ...).
+#   2) Her taraf için mtsMernisMersisAdresi_brd.ajx {"kisiKurumId": ...} → güncel mernis
+#      adresi metni, sonra mtsTebligatAdresGuncelle_brd.ajx {"dosyaId":..., "kisiKurumId":...,
+#      "adresTuru":"ADRTR00008"} → tebligat adresini mernise sabitler ({"basarilimi":true}).
+#   3) mtsTebligatUcreti_brd.ajx {"dosyaId":..., "tebligatKisiKurumIdList": "[85013687]"}
+#      (DİKKAT: liste GERÇEK JSON array DEĞİL, "[id1,id2]" biçiminde bir STRING alan olarak
+#      gönderiliyor — dosyaId'deki iç içe tırnaklama gibi UYAP'a özgü bir tuhaflık) → ücret
+#      (bare sayı, ör. 317.2, TL).
+#   4) MtsTebligatGonder_brd.ajx {"MTSTebligat": 1, "dosyaId":..., "tebligatKisiKurumIdList":
+#      <aynı string>, "tebligatUcreti": <ücret>, "odemeTipi": "7"} → gönderim + e-Barobirlik
+#      karttan ücret tahsili.
+# ÖNEMLİ: dosyaId burada _odeme_yap()'in döndürdüğü, ödeme SONRASI UYAP'ın verdiği GÜNCEL
+# token olmalı — taslak oluşturma anındaki eski dosya_id değil (bkz. _odeme_yap notu).
+#
+# AŞAĞIDAKİ TARAF SEÇİMİ (hasTebligatEvrak) TAM CANLI DOĞRULANMADI: capture'ın son (çok
+# büyük) bölümü gönderim SONRASI aynı şemayla ("tarafTebligatDVO": hasTebligatEvrak:true,
+# pttDurum:1, aynı kisiKurumId 85013687, gömülü PDF evrak baytları) bir yanıt içeriyor —
+# bu, mtsTarafTebligatList_brd.ajx'in gönderim sonrası TEKRAR çağrıldığında hasTebligatEvrak
+# alanının true'ya döndüğünü DESTEKLİYOR, ama o bölüm "payload:" diye etiketlenmiş
+# ("response:" değil) — muhtemelen kullanıcının capture'ı etiketleme hatası, ama KESİN DEĞİL.
+# Yani _tebligat_gonder'daki "hasTebligatEvrak=true olanı atla" filtresi, tekrar
+# çalıştırıldığında AYNI TARAFA İKİNCİ KEZ ÜCRET YAZMAYI önlemek için var, ama bu filtrenin
+# güvenilirliği CANLI olarak ayrıca doğrulanmalı (ör. bir dosyada tebligat gönder, sonra
+# job'ı AYNI dosya_id ile tekrar çalıştır, ikinci seferde 0 taraf/₺0 gönderildiğini gözle).
+# Adres adımı (mtsMernisMersisAdresi + mtsTebligatAdresGuncelle) HER taraf için KOŞULSUZ
+# çalıştırılıyor (capture'daki tek örnekte zaten aktif adres mernisti; "adres zaten mernisse
+# atla" gibi bir kısayol capture'dan doğrulanamadı, bu yüzden eklenmedi — kullanıcı otomatik
+# mernis güncellemesini seçti, bkz. proje notları).
+# Bu fonksiyonun ÇAĞRILIP ÇAĞRILMAYACAĞI burada bir sabitle değil, job_handlers.
+# _coklu_takip_ac'a geçirilen params.tebligat_aktif (panelden kullanıcının aç/kapa
+# yaptığı, varsayılan KAPALI) ile belirlenir — bkz. o dosyadaki orkestrasyon. Kapalıyken
+# tebligat hiç denenmez (dosya AÇIK ve ÖDENMİŞ kalır, UYAP'tan elle gönderilebilir).
+# Kullanıcı ilk kez açmadan önce, yukarıdaki hasTebligatEvrak filtresini tercihen TEK bir
+# zaten ödenmiş dosyada mts_tebligat_gonder KURTARMA job'ıyla izole test etmeli.
+async def _tebligat_gonder(ctx, takip, dosya_id):
+    """Bir MTS dosyasındaki, tebligat evrakı henüz oluşmamış tüm taraflara tebligat
+    gönderir (adreslerini önce mernise sabitleyerek). dosya_id, ödeme SONRASI UYAP'ın
+    döndürdüğü güncel opak token olmalı (bkz. _odeme_yap).
+    Dönüş: {"ucret": float, "kisi_kurum_idler": [...], "sonuc": str} ya da gönderilecek
+    taraf yoksa None."""
+    log = ctx.log
+    dosya_id_ham = dosya_id if (isinstance(dosya_id, str) and dosya_id.startswith('"')) else f'"{dosya_id}"'
+
+    taraf_list = await _api_json(ctx, "mtsTarafTebligatList_brd.ajx", {"dosyaId": dosya_id_ham})
+    if not isinstance(taraf_list, list) or not taraf_list:
+        log(f"[{takip.dosya_no}] Tebligat: gönderilecek taraf bulunamadı.")
+        return None
+
+    kisi_kurum_idler = []
+    for t in taraf_list:
+        dvo = (t or {}).get("tarafTebligatDVO") or {}
+        if dvo.get("hasTebligatEvrak"):
+            continue
+        kk_id = (dvo.get("evrakKisiDVO") or {}).get("guncelKisiKurumId")
+        if kk_id and kk_id not in kisi_kurum_idler:
+            kisi_kurum_idler.append(kk_id)
+    if not kisi_kurum_idler:
+        log(f"[{takip.dosya_no}] Tebligat: tüm taraflara zaten gönderilmiş.")
+        return None
+
+    for kk_id in kisi_kurum_idler:
+        mernis = await _api_json(ctx, "mtsMernisMersisAdresi_brd.ajx", {"kisiKurumId": kk_id})
+        mernis_adres = (mernis or {}).get("veri") if isinstance(mernis, dict) else None
+        if not mernis_adres:
+            raise ValueError(f"kisiKurumId {kk_id} için MERNİS adresi bulunamadı — "
+                              "tebligat adresi belirlenemedi.")
+        guncelle = await _api_json(ctx, "mtsTebligatAdresGuncelle_brd.ajx", {
+            "dosyaId": dosya_id_ham, "kisiKurumId": kk_id, "adresTuru": "ADRTR00008",
+        })
+        if not (isinstance(guncelle, dict) and guncelle.get("basarilimi")):
+            raise ValueError(f"kisiKurumId {kk_id} için tebligat adresi güncellenemedi: {guncelle}")
+        log(f"[{takip.dosya_no}] Tebligat adresi mernise sabitlendi (kisiKurumId {kk_id}): "
+            f"{mernis_adres}")
+
+    kisi_kurum_id_list_str = json.dumps(kisi_kurum_idler)
+
+    ucret_raw = await _api_text(ctx, "mtsTebligatUcreti_brd.ajx", {
+        "dosyaId": dosya_id_ham, "tebligatKisiKurumIdList": kisi_kurum_id_list_str,
+    })
+    try:
+        ucret = float(str(ucret_raw).strip())
+    except Exception:
+        raise ValueError(f"Tebligat ücreti okunamadı: {ucret_raw!r}")
+
+    log(f"[{takip.dosya_no}] Tebligat gönderiliyor ({len(kisi_kurum_idler)} taraf, {ucret} TL, "
+        "e-Barobirlik kart, MtsTebligatGonder_brd.ajx)...")
+    sonuc = await _api_text(ctx, "MtsTebligatGonder_brd.ajx", {
+        "MTSTebligat": 1, "dosyaId": dosya_id_ham,
+        "tebligatKisiKurumIdList": kisi_kurum_id_list_str,
+        "tebligatUcreti": ucret, "odemeTipi": "7",
+    })
+    log(f"[{takip.dosya_no}] ✓ Tebligat gönderildi ({ucret} TL, {len(kisi_kurum_idler)} taraf).")
+    return {"ucret": ucret, "kisi_kurum_idler": kisi_kurum_idler, "sonuc": sonuc}
+
+
+# ── "Tamamlanmayan Dosyalar" üzerinden ÖDEME DURUMU sorgusu ──────────────────
+# YALNIZCA OKUR — hiçbir şey göndermez/ödemez. "Excel'e Aktar" özelliği
+# (Panel/modules/mts_takip.py) VE yukarıdaki _odeme_yap() bu fonksiyonla o anki
+# durumu okur.
+_ESAS_NO_DESENI = _re.compile(r"^\d{4}/\d+$")
+
+
+async def odenmis_dosyalari_bul(ctx, takipler):
+    """UYAP'ın 'Tamamlanmayan Dosyalar' (dosyaTurKod=35) listesini TEK seferde çeker ve
+    her takibi borçlu ad soyadıyla eşleştirir — bkz. xml_takip._guncel_dosya_id_bul ile
+    AYNI eşleştirme deseni. Eşleşen kayıtta gerçek esas no varsa ("2026/894734" gibi;
+    "Ödeme Yapılmadı!" DEĞİL) o no'yu, yoksa None döner.
+
+    Dönüş: {dosya_no(str): gercek_dosya_no(str) | None}."""
+    from ..ipotek.takip import _guvenli_liste, _temiz_buyuk
+
+    liste = _guvenli_liste(await _api_json(ctx, "tamamlanmayanDosyalar_brd.ajx", {"dosyaTurKod": 35}))
+    sonuc = {}
+    for t in takipler:
+        hedef_adlar = [_temiz_buyuk(f"{b.ad} {b.soyad}".strip())
+                       for b in (t.borclular or []) if (b.ad or b.soyad)]
+        hedef_adlar = [ad for ad in hedef_adlar if ad]
+        gercek_no = None
+        if hedef_adlar:
+            adaylar = [k for k in liste
+                      if all(ad in _temiz_buyuk(k.get("taraflar") or "") for ad in hedef_adlar)]
+            for k in adaylar:
+                dn = (k.get("dosyaNo") or "").strip()
+                if _ESAS_NO_DESENI.match(dn):
+                    gercek_no = dn
+                    break
+        sonuc[str(t.dosya_no)] = gercek_no
+    return sonuc
+
+
+async def _guncel_dosya_id_bul(ctx, takip):
+    """UYAP 'Tamamlanmayan Dosyalar' listesinden, takibin borçlu ad-soyadıyla eşleşen
+    dosyanın GÜNCEL (tırnaklar dahil, ham) dosyaID'sini bulur — bkz. xml_takip
+    ._guncel_dosya_id_bul ile AYNI, CANLI DOĞRULANMIŞ desen (opak token her yanıtta
+    değişebildiği için her kullanımdan önce yeniden sorgulanmalı). Birden fazla veya
+    hiç eşleşme yoksa ValueError fırlatır (elle seçim gerekir).
+
+    Bu, ör. mts_tebligat_gonder job'ının kullanıcıdan ham opak token istemeden, yalnızca
+    takip.dosya_no/borclular ile çalışabilmesini sağlar."""
+    from ..ipotek.takip import _guvenli_liste, _temiz_buyuk
+
+    liste = _guvenli_liste(await _api_json(ctx, "tamamlanmayanDosyalar_brd.ajx", {"dosyaTurKod": 35}))
+    if not liste:
+        raise ValueError("'Tamamlanmayan Dosyalar' listesi boş.")
+    hedef_adlar = [_temiz_buyuk(f"{b.ad} {b.soyad}".strip())
+                   for b in (takip.borclular or []) if (b.ad or b.soyad)]
+    hedef_adlar = [ad for ad in hedef_adlar if ad]
+    if not hedef_adlar:
+        raise ValueError(f"[{takip.dosya_no}] Takipte borçlu bilgisi yok — dosya eşleştirilemez.")
+    adaylar = [k for k in liste
+              if all(ad in _temiz_buyuk(k.get("taraflar") or "") for ad in hedef_adlar)]
+    if not adaylar:
+        raise ValueError(f"[{takip.dosya_no}] 'Tamamlanmayan Dosyalar' listesinde eşleşen dosya "
+                         f"bulunamadı (aranan taraflar: {hedef_adlar}).")
+    if len(adaylar) > 1:
+        raise ValueError(f"[{takip.dosya_no}] Birden fazla eşleşen dosya bulundu ({len(adaylar)} "
+                         "adet) — belirsiz, params.dosya_id ile elle belirtin.")
+    dosya_id = adaylar[0].get("dosyaID") or adaylar[0].get("dosyaId")
+    if not dosya_id:
+        raise ValueError(f"[{takip.dosya_no}] Eşleşen kayıtta dosyaID alanı yok: {adaylar[0]}")
+    return dosya_id

@@ -24,7 +24,7 @@ import threading
 import urllib.request
 import urllib.error
 
-from .config import PORT
+from .config import PORT, local_gateway_token
 
 BASE_URL = "https://avukat.uyap.gov.tr"
 
@@ -352,6 +352,9 @@ class SorguMotoru:
                 req = urllib.request.Request(url, data=body, method="POST")
                 for k, v in COMMON_HEADERS.items():
                     req.add_header(k, v)
+                local_tok = local_gateway_token()
+                if local_tok:
+                    req.add_header("X-Uyap-Local-Token", local_tok)
                 with urllib.request.urlopen(req, timeout=timeout) as r:
                     status = r.status
                     text = r.read().decode("utf-8", "replace")

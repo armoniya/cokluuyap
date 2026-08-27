@@ -41,6 +41,14 @@ DEFAULTS = {
     "il": "İzmir",
     "adliye": "İzmir",
     "onay_modu": "tek_tek",
+    # MTS takip açıldıktan SONRAKİ iki AYRI aşama (ödeme/tebligat) — kullanıcının panelden
+    # aç/kapa + onay modu seçtiği ayarlar (bkz. job_handlers._coklu_takip_ac). Ödeme
+    # varsayılan AÇIK (canlı doğrulandı); tebligat varsayılan KAPALI (bkz. mts/takip.py
+    # _tebligat_gonder üstündeki not — mükerrer ücretlendirme filtresi izole test bekliyor).
+    "odeme_aktif": True,
+    "odeme_onay_modu": "yok",
+    "tebligat_aktif": False,
+    "tebligat_onay_modu": "yok",
 }
 
 
@@ -208,6 +216,30 @@ def save_config(cfg: dict) -> None:
         _restrict_perms(CONFIG_PATH)
     except Exception as e:
         print(f"[CONFIG] Ayar kaydedilemedi: {e}")
+
+
+def local_gateway_token() -> str:
+    """Yerel ağ geçidinin (uyap_proxy.py, 127.0.0.1:8800) require_auth() 403 ile aradığı
+    'X-Uyap-Local-Token' değerini okur.
+
+    uyap_proxy.py bu jetonu SÜREÇ-İÇİ urllib istemcilerine (aynı process'te çalışan eski
+    runner modülleri: SorguMotoru, is_kuyrugu, ...) otomatik urllib opener'la enjekte eder
+    (bkz. o dosyadaki _install_local_token_opener). Django paneli ve ttk GUI ise ağ geçidiyle
+    AYRI bir süreçte çalışır — o opener'dan yararlanamaz — bu yüzden uyap_proxy.py'nin AYNI
+    kullanıcıya özel jeton DOSYASINI (bkz. orada _local_token_file, aynı yol biçimi) burada
+    da okuyup isteğe kendimiz eklememiz gerekir. Jeton yoksa/okunamazsa boş döner (istek
+    yine de gider; localhost dışından geliyormuş gibi görünürse GW_PASS Basic-Auth'una düşer)."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        path = os.path.join(base, "UyapIcra", "gw_local_token")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+        path = os.path.join(base, "uyapicra", "gw_local_token")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 
 # ── Ağ yardımcıları ──────────────────────────────────────────────────────────────

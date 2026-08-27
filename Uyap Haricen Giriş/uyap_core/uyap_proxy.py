@@ -52,7 +52,7 @@ import uvicorn
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from ._runtime import interactive_write, WRITE_METHODS, is_read_hint
+from ._runtime import interactive_write, batch_write, WRITE_METHODS
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -206,7 +206,13 @@ class GatewaySession:
         self.last_request_ts = time.monotonic()
 
     async def _probe(self):
-        """Cheap liveness check against the authenticated endpoint."""
+        """Cheap liveness check against the authenticated endpoint. BİLEREK
+        kilitsiz: `relogin()` (bkz. altta) bunu bazen `interactive_write()`'ın
+        ZATEN tuttuğu `UYAP_WRITE_LOCK` içinden çağırır (login-duvarı bir yazma
+        isteğinin ORTASINDA tespit edilirse) — burada da kilit almaya kalksa
+        asyncio.Lock yeniden-girilebilir OLMADIĞINDAN kilitlenip (deadlock)
+        sunucuyu tamamen durdururdu. Gerçek düzeltme: bu fonksiyonu DEĞİL,
+        onu kilitsiz bağlamdan çağıran `_keepalive_loop`'u kilitle (bkz. altta)."""
         try:
             r = await self.client.post(
                 f"{UYAP_BASE}/get_avukat_id.ajx",
@@ -1483,13 +1489,27 @@ def require_auth(request: Request, creds: HTTPBasicCredentials = Depends(securit
 async def _keepalive_loop(session: "GatewaySession", idle_interval: int):
     """Background task: while no requests are flowing, probe every `idle_interval` seconds
     and silently re-login if UYAP has dropped the session. Active traffic already keeps the
-    session warm, so we only spend a probe when genuinely idle."""
+    session warm, so we only spend a probe when genuinely idle.
+
+    BULGU (2026-07-14): bu yoklama `session._probe()`'u DOĞRUDAN, `UYAP_WRITE_LOCK`'a hiç
+    girmeden çağırıyordu — proxy'nin (bkz. proxy() içindeki `interactive_write()`) VE iş
+    kuyruğunun (bkz. `batch_write`) paylaştığı TEK kilidi tamamen atlayan ÜÇÜNCÜ bir yazar.
+    Uzun süren çok-sayfalı bir "Yenile" taramasında sayfalar/kapsamlar ARASINDA Panel'in
+    kendi işleme süresi `idle_interval`i (5sn) kolayca aşıyor; tam o boşlukta kilitsiz atılan
+    bu yoklama, hemen ardından gelen bir sonraki (kilitli) asıl istekle GERÇEKTEN eşzamanlı
+    UYAP'a ulaşıp UYAP'ın "eşzamanlı sorgulama" reddini tetikliyordu — 30sn'lik geniş
+    yeniden-deneme penceresi bile bunu açamadı çünkü sorun bir YARIŞ değil, HER turda
+    yeniden oluşan bir çakışmaydı. `batch_write()` (düşük öncelik) ile sarmalanır: bekleyen
+    bir bireysel/toplu istek varsa yoklama ona yol verir — `session._probe()`'un KENDİSİ
+    kilitlenmedi (bkz. o fonksiyonun docstring'i — `relogin()` onu bazen ZATEN tutulan
+    kilidin içinden çağırıyor, orada kilitlemek deadlock olurdu)."""
     while True:
         await asyncio.sleep(idle_interval)
         if time.monotonic() - session.last_request_ts < idle_interval:
             continue  # recent traffic kept it warm; skip the redundant probe
         try:
-            await session.ensure_alive()
+            async with batch_write():
+                await session.ensure_alive()
         except BaseException as e:  # SystemExit from a login helper must not kill the loop
             print(f"[!] Keepalive hatası: {e}")
 
@@ -1624,13 +1644,14 @@ async def proxy(full_path: str, request: Request, _user: str = Depends(require_a
         # (iş kuyruğu) bu istek bitene kadar bekletir. GET'ler serbest akar (kilitlenmez).
         # NOT: LAN'dan doğrudan bu FastAPI proxy'sine bağlanan istemci de artık aynı yazma
         # kilidini paylaşır (önceden bu yol kilide hiç girmiyordu).
-        # İSTİSNA (adil sıralama): istemci, durum-DEĞİŞTİRMEYEN bir sorguyu (POST'la yapılan
-        # okuma, ör. icra/SGK dosya sorgusu) X-Uyap-Read başlığıyla işaretlerse yazma kilidine
-        # SOKULMAZ; böylece toplu sorgu diğer kullanıcıların bireysel isteklerini bekletmez
-        # (jobs tarafındaki write=False'un karşılığı).
-        _kilitli_yazma = (request.method.upper() in WRITE_METHODS
-                          and not is_read_hint(request.headers))
-        if _kilitli_yazma:
+        # Durum-DEĞİŞTİRMEYEN sorgular (POST'la yapılan okuma, ör. icra/SGK dosya sorgusu,
+        # X-Uyap-Read başlıklı) ARTIK istisna DEĞİL — bkz. _runtime modül docstring'i: UYAP
+        # eşzamanlı HİÇBİR isteği (yazma/okuma fark etmeksizin) kabul etmiyor ("Eş zamanlı
+        # olarak birden fazla sorgulama yapamazsınız!" — kullanıcı bulgusu, 2026-07-12; ör.
+        # arka plandaki 30dk'lık otomatik senkron turu ile elle basılan "Yenile" aynı anda
+        # UYAP'a gidince ikincisi reddediliyordu). Bu yüzden TÜM POST/PUT/PATCH/DELETE
+        # (okuma-ipuçlu olsun olmasın) aynı `interactive_write()` geçidinden geçer.
+        if request.method.upper() in WRITE_METHODS:
             async with interactive_write():
                 resp = await forward_with_relogin()
         else:

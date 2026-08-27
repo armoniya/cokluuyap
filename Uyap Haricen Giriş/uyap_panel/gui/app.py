@@ -600,8 +600,35 @@ class TakipTab:
             ttk.Radiobutton(row2, text=lbl, value=val, variable=self.onay_var,
                             bootstyle="info").pack(side=LEFT, padx=6)
 
+        # 2.5) Ödeme & Tebligat (yalnız MTS) — takip AÇILDIKTAN SONRA, ayrı onay turlarıyla.
+        self.odeme_aktif_var = ttk.BooleanVar(value=app.cfg.get("odeme_aktif", True))
+        self.odeme_onay_var = ttk.StringVar(value=app.cfg.get("odeme_onay_modu", "yok"))
+        self.tebligat_aktif_var = ttk.BooleanVar(value=app.cfg.get("tebligat_aktif", False))
+        self.tebligat_onay_var = ttk.StringVar(value=app.cfg.get("tebligat_onay_modu", "yok"))
+        if kind == "mts":
+            ot_c = RoundedCard(parent, title="3 · Ödeme & Tebligat (dosya açıldıktan SONRA)",
+                               padding=12)
+            ot_c.pack(fill=X, pady=(10, 0))
+            ot = ot_c.inner
+            row = ttk.Frame(ot); row.pack(fill=X)
+            odeme_col = ttk.Frame(row); odeme_col.pack(side=LEFT, fill=X, expand=True)
+            ttk.Checkbutton(odeme_col, text="Harç ödemesini dene", variable=self.odeme_aktif_var,
+                            bootstyle="info").pack(anchor=W)
+            for val, lbl in (("yok", "Onaysız (hepsini öde)"), ("tek_tek", "Her dosyada onayla"),
+                             ("toplu", "Toplu önizle, tek onay")):
+                ttk.Radiobutton(odeme_col, text=lbl, value=val, variable=self.odeme_onay_var,
+                                bootstyle="info").pack(anchor=W, padx=(18, 0))
+            tebligat_col = ttk.Frame(row); tebligat_col.pack(side=LEFT, fill=X, expand=True, padx=(24, 0))
+            ttk.Checkbutton(tebligat_col, text="Tebligat göndermeyi dene", variable=self.tebligat_aktif_var,
+                            bootstyle="info").pack(anchor=W)
+            for val, lbl in (("yok", "Onaysız (hepsine gönder)"), ("tek_tek", "Her dosyada onayla"),
+                             ("toplu", "Toplu önizle, tek onay")):
+                ttk.Radiobutton(tebligat_col, text=lbl, value=val, variable=self.tebligat_onay_var,
+                                bootstyle="info").pack(anchor=W, padx=(18, 0))
+
         # 3) Belgeler
-        belf_c = RoundedCard(parent, title="3 · Belgeler (opsiyonel; tümüne uygulanır)",
+        belf_c = RoundedCard(parent, title=("4" if kind == "mts" else "3") +
+                             " · Belgeler (opsiyonel; tümüne uygulanır)",
                              padding=12)
         belf_c.pack(fill=X, pady=(10, 0))
         belf = belf_c.inner
@@ -698,11 +725,21 @@ class TakipTab:
         self.app.cfg["il"] = self.il_var.get().strip() or "İzmir"
         self.app.cfg["adliye"] = self.adliye_var.get().strip() or "İzmir"
         self.app.cfg["onay_modu"] = self.onay_var.get()
+        odeme_aktif = odeme_onay_modu = tebligat_aktif = tebligat_onay_modu = None
+        if self.kind == "mts":
+            odeme_aktif = self.odeme_aktif_var.get()
+            odeme_onay_modu = self.odeme_onay_var.get()
+            tebligat_aktif = self.tebligat_aktif_var.get()
+            tebligat_onay_modu = self.tebligat_onay_var.get()
+            self.app.cfg.update(odeme_aktif=odeme_aktif, odeme_onay_modu=odeme_onay_modu,
+                               tebligat_aktif=tebligat_aktif, tebligat_onay_modu=tebligat_onay_modu)
         save_config(self.app.cfg)
 
         svc = self._service()
         params = svc.build_params(self.takipler, il=self.app.cfg["il"],
                                   adliye=self.app.cfg["adliye"], onay_modu=self.onay_var.get(),
+                                  odeme_aktif=odeme_aktif, odeme_onay_modu=odeme_onay_modu,
+                                  tebligat_aktif=tebligat_aktif, tebligat_onay_modu=tebligat_onay_modu,
                                   vekalet=self.vekalet, dayanak=self.dayanak)
         self.start_btn.configure(state="disabled")
         self.status_lbl.configure(text="İş gönderiliyor…")
@@ -803,47 +840,87 @@ class TakipTab:
 
         win.protocol("WM_DELETE_WINDOW", lambda: None)
 
-        if mod == "tek_tek":
-            ozet = pending.get("takip") or {}
-            ttk.Label(frm, text=f"Takip onayı — Dosya No: {ozet.get('dosya_no')}",
-                      font=("Segoe UI Semibold", 13), bootstyle="info").pack(anchor=W)
+        def tek_tek_dialog(title, metin, reject_label, reject_decision, approve_label):
+            """Tek kalem onayı: Atla (yalnız BU AŞAMAYI atlar, öncekini geri almaz) / Onayla."""
+            ttk.Label(frm, text=title, font=("Segoe UI Semibold", 13),
+                      bootstyle="info").pack(anchor=W)
             txt = ScrolledText(frm, height=20, font=("Consolas", 9),
                                background="#11151c", foreground="#d7e2ea")
             txt.pack(fill=BOTH, expand=True, pady=8)
-            txt.insert(END, _ozet_metni(ozet))
+            txt.insert(END, metin)
             txt.configure(state="disabled")
             bf = ttk.Frame(frm); bf.pack(fill=X)
-            ttk.Button(bf, text="Tümünü İptal Et", bootstyle="danger",
-                       command=lambda: close_with("cancel")).pack(side=LEFT)
-            ttk.Button(bf, text="Onayla ve Aç", bootstyle="success",
+            ttk.Button(bf, text=reject_label, bootstyle="danger",
+                       command=lambda: close_with(reject_decision)).pack(side=LEFT)
+            ttk.Button(bf, text=approve_label, bootstyle="success",
                        command=lambda: close_with("approve")).pack(side=RIGHT, padx=4)
-            ttk.Button(bf, text="Bu Dosyayı Atla", bootstyle="secondary-outline",
-                       command=lambda: close_with("skip")).pack(side=RIGHT, padx=4)
-        else:  # toplu
-            takipler = pending.get("takipler") or []
-            ttk.Label(frm, text=f"Toplu önizleme — {len(takipler)} takip. Açılacakları seçin:",
-                      font=("Segoe UI Semibold", 13), bootstyle="info").pack(anchor=W)
+            if reject_decision != "skip":
+                ttk.Button(bf, text="Bu Dosyayı Atla", bootstyle="secondary-outline",
+                           command=lambda: close_with("skip")).pack(side=RIGHT, padx=4)
+
+        def toplu_dialog(title, kalemler, satir_fn, reject_label, reject_selection):
+            """Toplu önizleme: reject_selection=None -> sol buton GERÇEK iptal (takip-açma);
+            [] -> sol buton 'hiçbirini yapma' (ödeme/tebligat aşaması — önceki kazanım kalır)."""
+            ttk.Label(frm, text=title, font=("Segoe UI Semibold", 13),
+                      bootstyle="info").pack(anchor=W)
             from ttkbootstrap.scrolled import ScrolledFrame
             sf = ScrolledFrame(frm, autohide=True)
             sf.pack(fill=BOTH, expand=True, pady=8)
             secimler = {}
-            for o in takipler:
+            for o in kalemler:
                 dn = str(o.get("dosya_no"))
                 var = ttk.BooleanVar(value=True)
                 secimler[dn] = var
-                t_text = (f"Dosya {dn} · {o.get('alacakli','')} · "
-                          f"{len(o.get('borclular',[]))} borçlu · Toplam {o.get('toplam',0)} TL")
-                ttk.Checkbutton(sf, text=t_text, variable=var, bootstyle="info").pack(anchor=W, pady=1)
+                ttk.Checkbutton(sf, text=satir_fn(o), variable=var, bootstyle="info").pack(anchor=W, pady=1)
 
             def onayla():
                 secili = [dn for dn, v in secimler.items() if v.get()]
                 close_with("approve", selection=secili)
 
+            def reddet():
+                if reject_selection is None:
+                    close_with("cancel")
+                else:
+                    close_with("approve", selection=reject_selection)
+
             bf = ttk.Frame(frm); bf.pack(fill=X)
-            ttk.Button(bf, text="Tümünü İptal Et", bootstyle="danger",
-                       command=lambda: close_with("cancel")).pack(side=LEFT)
-            ttk.Button(bf, text="Seçilenleri Aç", bootstyle="success",
+            ttk.Button(bf, text=reject_label, bootstyle="danger", command=reddet).pack(side=LEFT)
+            ttk.Button(bf, text="Seçilenlerle Devam Et", bootstyle="success",
                        command=onayla).pack(side=RIGHT, padx=4)
+
+        if mod == "tek_tek":
+            ozet = pending.get("takip") or {}
+            tek_tek_dialog(f"Takip onayı — Dosya No: {ozet.get('dosya_no')}", _ozet_metni(ozet),
+                           "Tümünü İptal Et", "cancel", "Onayla ve Aç")
+        elif mod == "toplu":
+            takipler = pending.get("takipler") or []
+            toplu_dialog(f"Toplu önizleme — {len(takipler)} takip. Açılacakları seçin:", takipler,
+                        lambda o: (f"Dosya {o.get('dosya_no')} · {o.get('alacakli','')} · "
+                                  f"{len(o.get('borclular',[]))} borçlu · Toplam {o.get('toplam',0)} TL"),
+                        "Tümünü İptal Et", None)
+        elif mod == "odeme_tek_tek":
+            kalem = pending.get("kalem") or {}
+            tek_tek_dialog(f"Ödeme onayı — Dosya No: {kalem.get('dosya_no')}", _harc_metni(kalem),
+                           "Tümünü İptal Et (kalanları durdur)", "cancel", "Onayla")
+        elif mod == "odeme_toplu":
+            kalemler = pending.get("kalemler") or []
+            toplu_dialog(f"Toplu ödeme önizleme — {len(kalemler)} dosya. Ödenecekleri seçin:", kalemler,
+                        lambda o: (f"Dosya {o.get('dosya_no')} · {o.get('alacakli','')} · "
+                                  f"Harç toplamı {o.get('toplam_harc',0)} TL"),
+                        "Hiçbirini Ödeme", [])
+        elif mod == "tebligat_tek_tek":
+            kalem = pending.get("kalem") or {}
+            tek_tek_dialog(f"Tebligat onayı — Dosya No: {kalem.get('dosya_no')}", _tebligat_metni(kalem),
+                           "Tümünü İptal Et (kalanları durdur)", "cancel", "Onayla")
+        elif mod == "tebligat_toplu":
+            kalemler = pending.get("kalemler") or []
+            toplu_dialog(f"Toplu tebligat önizleme — {len(kalemler)} dosya. Gönderilecekleri seçin:", kalemler,
+                        lambda o: f"Dosya {o.get('dosya_no')} · {o.get('alacakli','')} · {len(o.get('borclular',[]))} taraf",
+                        "Hiçbirine Gönderme", [])
+        else:
+            ttk.Label(frm, text=f"Bilinmeyen onay türü: {mod}", bootstyle="danger").pack(anchor=W)
+            ttk.Button(frm, text="Kapat", bootstyle="secondary",
+                       command=lambda: close_with("cancel")).pack(anchor=W, pady=8)
 
 
 def _ozet_metni(ozet):
@@ -861,6 +938,24 @@ def _ozet_metni(ozet):
         s.append(f"  {i}. {k.get('ad')}: {k.get('tutar')} TL")
     s.append(f"TOPLAM ALACAK : {ozet.get('toplam')} TL")
     s.append("=" * 60)
+    return "\n".join(s)
+
+
+def _harc_metni(kalem):
+    s = [f"DOSYA NO   : {kalem.get('dosya_no')}", f"ALACAKLI   : {kalem.get('alacakli')}",
+         "-" * 40, "HARÇ/MASRAF:"]
+    for h in kalem.get("harclar", []) or []:
+        s.append(f"  · {h.get('ad')}: {h.get('miktar', 0)} TL")
+    s.append("-" * 40)
+    s.append(f"TOPLAM     : {kalem.get('toplam_harc', 0)} TL")
+    return "\n".join(s)
+
+
+def _tebligat_metni(kalem):
+    s = [f"DOSYA NO   : {kalem.get('dosya_no')}", f"ALACAKLI   : {kalem.get('alacakli')}",
+         "-" * 40, "TARAFLAR:"]
+    for i, b in enumerate(kalem.get("borclular", []) or [], 1):
+        s.append(f"  {i}. {b.get('ad')} {b.get('soyad')}")
     return "\n".join(s)
 
 

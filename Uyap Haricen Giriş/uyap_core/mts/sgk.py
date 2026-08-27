@@ -5,8 +5,12 @@ Kararlı/Sorgu/SGK Sorgu/sgk_sorgu_gui.py'deki SorguMotoru + veri özetleme
 mantığının, "güçlü bağlantı" (jobs.JobContext.uyap → uyap_proxy.gw) üzerinde
 çalışacak hâli. Playwright `context.request.fetch` → `await ctx.uyap(...)`.
 
-SALT-OKUMA: tüm sorgular write=False ile gider (yazma kilidine girmez), bu yüzden
-bireysel kullanıcıları etkilemez. Sonuçlar metin döner; imza/indirme/onay yok.
+SALT-OKUMA: tüm sorgular write=False ile gider — bu, artık kilitlemeyi ETKİLEMEZ
+(bkz. jobs.JobContext.uyap docstring, kullanıcı bulgusu 2026-07-12: UYAP tek oturumda
+eşzamanlı ikinci bir sorguyu bile reddediyor, "salt okuma" istekler de batch_write()
+kilidine girer). `write=False` yalnız belgesel kalır; DÜŞÜK öncelikli kilit sayesinde
+gerçek bireysel (anlık) istekler yine bu toplu sorgunun arkasında beklemez. Sonuçlar
+metin döner; imza/indirme/onay yok.
 
 Bu modül hem ofiste (job_handlers.sgk_toplu_sorgu) hem de istemcide (formatlayıcılar
 ve sabitler; Excel I/O ayrıca sgk_excel.py'de) import edilebilir.
@@ -308,7 +312,8 @@ _SORGU_HEADERS = {"Referer": "https://avukat.uyap.gov.tr/dosya-sorgulama",
 
 
 async def _post_json(ctx, endpoint, payload):
-    """UYAP'a POST atıp (status, parsed) döndürür. write=False: yazma kilidine girmez."""
+    """UYAP'a POST atıp (status, parsed) döndürür. write=False artık yalnız belgesel —
+    DÜŞÜK öncelikli batch_write() kilidine yine de girer (bkz. jobs.JobContext.uyap)."""
     resp = await ctx.uyap("POST", endpoint, json=payload, headers=_SORGU_HEADERS, write=False)
     text = resp.text
     try:

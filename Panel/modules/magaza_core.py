@@ -57,6 +57,15 @@ KATALOG = [
         "yapraklar": [{"key": "xml", "label": "XML", "accent": "clay"}],
     },
     {
+        "kimlik": "potek_takip_acma",
+        "ad": "İpotek Takip Açma",
+        "aciklama": "İpoteğin Paraya Çevrilmesi Yolu İle İcra Takibi açılışı (Mersis/TCKN/IBAN "
+                    "girişi + Excel'den alacak kalemleri).",
+        "fiyat": "Aylık",
+        "menu_yolu": ["Dosyalarım", "İcra", "Toplu Takip Aç"],
+        "yapraklar": [{"key": "potek_takip", "label": "İpotek Takip", "accent": "sage"}],
+    },
+    {
         "kimlik": "sgk_sorgu",
         "ad": "Toplu Sorgu (SGK)",
         "aciklama": "Excel listesinden toplu SGK / çalışan sorgulaması.",

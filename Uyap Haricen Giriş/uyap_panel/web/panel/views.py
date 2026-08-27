@@ -149,6 +149,10 @@ def dashboard(request):
         "il": cfg.get("il", "İzmir"),
         "adliye": cfg.get("adliye", "İzmir"),
         "onay_modu": cfg.get("onay_modu", "tek_tek"),
+        "odeme_aktif": cfg.get("odeme_aktif", True),
+        "odeme_onay_modu": cfg.get("odeme_onay_modu", "yok"),
+        "tebligat_aktif": cfg.get("tebligat_aktif", False),
+        "tebligat_onay_modu": cfg.get("tebligat_onay_modu", "yok"),
         "giris_url": manager.giris_url(PORT),
         "port": PORT,
         "sgk_sorgular": [{"baslik": b, "anahtar": a} for b, _, a in SORGULAR],
@@ -290,13 +294,24 @@ def api_takip_start(request):
     il = (data.get("il") or "İzmir").strip()
     adliye = (data.get("adliye") or "İzmir").strip()
     onay_modu = data.get("onay_modu") or "tek_tek"
+    # Yalnız MTS sekmesi bu alanları gönderir (bkz. _takip_section.html {% if kind == 'mts' %});
+    # icra sekmesinde None kalır, build_params bunları hiç params'a eklemez.
+    odeme_aktif = data.get("odeme_aktif")
+    odeme_onay_modu = data.get("odeme_onay_modu")
+    tebligat_aktif = data.get("tebligat_aktif")
+    tebligat_onay_modu = data.get("tebligat_onay_modu")
 
     cfg = load_config()
     cfg.update(il=il, adliye=adliye, onay_modu=onay_modu)
+    if kind == "mts":
+        cfg.update(odeme_aktif=bool(odeme_aktif), odeme_onay_modu=odeme_onay_modu or "yok",
+                  tebligat_aktif=bool(tebligat_aktif), tebligat_onay_modu=tebligat_onay_modu or "yok")
     save_config(cfg)
 
     svc = _service(request)
     params = svc.build_params(takipler, il=il, adliye=adliye, onay_modu=onay_modu,
+                              odeme_aktif=odeme_aktif, odeme_onay_modu=odeme_onay_modu,
+                              tebligat_aktif=tebligat_aktif, tebligat_onay_modu=tebligat_onay_modu,
                               vekalet=bucket.get("vekalet"), dayanak=bucket.get("dayanak"))
     job_id, err = svc.submit(kind, params)
     if err:
