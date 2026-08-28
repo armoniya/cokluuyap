@@ -496,6 +496,56 @@
       <div class="logbox" id="dg-log"></div>
     </section>
 
+    <!-- Hukuk Dosyalarım -->
+    <section class="panel" data-panel="hukuk_dosyalarim">
+      <h1 class="h1">Hukuk Dosyalarım</h1>
+      <p class="sub">Senkron Kapsamı'nda seçilen Hukuk dosyaları. Bu liste yerel veritabanından
+        gelir; UYAP'tan tazelemek için “Yenile”'yi kullanın.</p>
+
+      <div class="conn-card icra-criteria">
+        <div class="icra-row">
+          <label class="icra-k">Yargı Birimi</label>
+          <select id="hd-birim"><option>Tümü</option></select>
+          <label class="icra-k">Mahkeme</label>
+          <select id="hd-mahkeme"><option>Tümü</option></select>
+          <label class="icra-k">Dosya Türü</label>
+          <select id="hd-dosya-tur"><option>Tümü</option></select>
+          <label class="icra-k">Durum</label>
+          <select id="hd-durum"><option>Tümü</option></select>
+        </div>
+        <div class="icra-row">
+          <label class="icra-k">Açılış Tarihi</label>
+          <input type="text" id="hd-tarih-bas" class="icra-inp" placeholder="GG.AA.YYYY">
+          <span class="icra-dash">–</span>
+          <input type="text" id="hd-tarih-bit" class="icra-inp" placeholder="GG.AA.YYYY">
+          <label class="icra-k">Taraf Adı (Davacı/Davalı)</label>
+          <input type="text" id="hd-taraf-adi" class="icra-inp" placeholder="Ad, soyad veya unvan">
+        </div>
+      </div>
+
+      <div class="sgk-toolbar">
+        <button class="conn-btn inline" id="hd-filtrele">Filtrele</button>
+        <button class="conn-btn ghost inline" id="hd-temizle">Temizle</button>
+        <button class="conn-btn ghost inline" id="hd-yenile">Yenile (UYAP'tan Güncelle)</button>
+        <button class="conn-btn ghost inline" id="hd-pause" disabled>Duraklat</button>
+        <button class="conn-btn ghost inline" id="hd-stop" disabled>Durdur</button>
+        <button class="conn-btn ghost inline" id="hd-detay">Dosya Görüntüle</button>
+        <span class="conn-status" id="hd-status"></span>
+      </div>
+
+      <div class="sgk-tablewrap">
+        <table class="sgk-table" id="hd-table">
+          <thead>
+            <tr id="hd-head"></tr>
+            <tr id="hd-filter-row"></tr>
+          </thead>
+          <tbody id="hd-body"></tbody>
+        </table>
+      </div>
+
+      <div class="logbox" id="hd-log"></div>
+    </section>
+
     <!-- Barkod Sorgu (Kapalı Tebligat — PTT) -->
     <section class="panel" data-panel="barkod_sorgu">
       <h1 class="h1">Barkod Sorgu (Kapalı Tebligat — PTT)</h1>
@@ -719,6 +769,7 @@
 <script src="static/logger.js"></script>
 <script src="static/uretilmis.js"></script>
 <script src="static/dosyalarim_genel.js"></script>
+<script src="static/hukuk.js"></script>
 <script src="static/barkod.js"></script>
 <script src="static/senkron_kapsami.js"></script>
 <script src="static/settings.js"></script>

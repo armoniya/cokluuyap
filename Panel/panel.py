@@ -56,6 +56,7 @@ from modules.logger import LoggerPanel
 from modules.ayarlar import AyarlarPanel, auto_connect_mode
 from modules.senkron_kapsami import SenkronKapsamiPanel
 from modules.dosyalarim_genel import DosyalarimGenelPanel
+from modules.hukuk_dosyalarim import HukukDosyalarimPanel
 from modules.barkod_sorgu_panel import BarkodSorguPanel
 from modules.uretilmis_runner import UretilmisRunner
 from modules.magaza import MagazaPanel
@@ -388,7 +389,7 @@ class Panel(tk.Tk):
 
     # Menü gruplarının (katlanır başlık) rengi — katalogdaki menu_yolu adlarına göre.
     GRUP_ACCENT = {
-        "Dosyalarım": C.SAGE, "İcra": C.CLAY, "Toplu Takip Aç": C.SAGE,
+        "Dosyalarım": C.SAGE, "İcra": C.CLAY, "Hukuk": C.BLUE, "Toplu Takip Aç": C.SAGE,
         "Araçlar": C.GOLD, "Raporlar": C.BLUE, "Üretilen Modüller": C.GOLD,
     }
 
@@ -1253,12 +1254,14 @@ class Panel(tk.Tk):
             self.panels[key] = self._istemci_modu_panel(key)
             return self.panels[key]
         uretilmis = {m["key"]: m for m in logger_core.registry_oku()}
-        MODUL = {"icra_dosyalarim", "mts", "potek_takip", "xml", "baglanti", "udf", "sgk", "logger",
+        MODUL = {"icra_dosyalarim", "hukuk_dosyalarim", "mts", "potek_takip", "xml", "baglanti", "udf", "sgk", "logger",
                  "ayarlar", "magaza", "senkron_kapsami", "dosyalarim_genel"}
         if key in MODUL or key in uretilmis:
             frame = tk.Frame(self.content, bg=C.BG)
             if key == "icra_dosyalarim":
                 self.icra = IcraDosyalarimPanel(frame, self)
+            elif key == "hukuk_dosyalarim":
+                self.hukuk = HukukDosyalarimPanel(frame, self)
             elif key == "mts":
                 self.mts = MtsTakipPanel(frame, self)
             elif key == "potek_takip":
@@ -1331,9 +1334,9 @@ class Panel(tk.Tk):
             except Exception:
                 pass
             self.panels.pop(key, None)
-            for ad in ("icra", "mts", "udf", "sgk", "logger"):
+            for ad in ("icra", "hukuk", "mts", "udf", "sgk", "logger"):
                 if getattr(self, ad, None) is not None and key == {
-                        "icra": "icra_dosyalarim", "mts": "mts", "udf": "udf",
+                        "icra": "icra_dosyalarim", "hukuk": "hukuk_dosyalarim", "mts": "mts", "udf": "udf",
                         "sgk": "sgk", "logger": "logger"}.get(ad):
                     setattr(self, ad, None)
 
@@ -1389,7 +1392,7 @@ class Panel(tk.Tk):
     # Kullanıcı bulgusu (2026-07-13): aynı ofisin birden fazla çalışanı ayrı
     # ayrı veritabanı/UYAP senkronu tutmasın — istemci makine, ofis
     # sunucusunun web panelinden (Panel/web/server.py, 8090) görüntülemeli.
-    ISTEMCI_MODU_ENGELLI = {"icra_dosyalarim", "dosyalarim_genel", "senkron_kapsami", "barkod_sorgu"}
+    ISTEMCI_MODU_ENGELLI = {"icra_dosyalarim", "hukuk_dosyalarim", "dosyalarim_genel", "senkron_kapsami", "barkod_sorgu"}
 
     def _istemci_modu_panel(self, key):
         title = self.labels.get(key, key)
@@ -1579,7 +1582,7 @@ def main():
         # Dinamik menü kapsamı: birkaç app'i etkinleştir, menüyü canlı tazele,
         # sonra hepsini geri al (kullanıcının sahiplik dosyasını kirletme).
         _test_apps = ["mts_takip_acma", "xml_takip", "sgk_sorgu",
-                      "icra_dosyalarim", "udf_donusturucu", "oturum_kaydi"]
+                      "icra_dosyalarim", "hukuk_dosyalarim", "udf_donusturucu", "oturum_kaydi"]
         _onceki_sahip = magaza_core.sahip_olunanlar()
         for _k in _test_apps:
             magaza_core.sahip_ekle(_k)

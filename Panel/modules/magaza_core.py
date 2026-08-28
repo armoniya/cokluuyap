@@ -82,6 +82,14 @@ KATALOG = [
         "yapraklar": [{"key": "icra_dosyalarim", "label": "Dosyalarım", "accent": "clay"}],
     },
     {
+        "kimlik": "hukuk_dosyalarim",
+        "ad": "Hukuk Dosyalarım",
+        "aciklama": "Hukuk (dava) dosyalarınızı arayın, mahkeme ve taraf bilgilerini görün.",
+        "fiyat": "Aylık",
+        "menu_yolu": ["Dosyalarım", "Hukuk"],
+        "yapraklar": [{"key": "hukuk_dosyalarim", "label": "Dosyalarım", "accent": "blue"}],
+    },
+    {
         "kimlik": "udf_donusturucu",
         "ad": "UDF Dönüştürücü",
         "aciklama": "Word/PDF belgelerini UYAP UDF biçimine dönüştürün ve e-imzalayın.",

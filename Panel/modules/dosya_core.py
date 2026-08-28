@@ -92,6 +92,7 @@ YARGI_TURLERI = [
 ]
 YARGI_TURU_ADI = dict(YARGI_TURLERI)
 YARGI_TURU_ICRA = 2  # bkz. YARGI_TURLERI — _taraflar_sutunlari önceliklendirmesi yalnız İcra'da
+YARGI_TURU_HUKUK = 1  # bkz. YARGI_TURLERI — hukuk_dosyalarim.py'nin sabit kapsamı
 
 
 def _kendi_vekil_adlari():
@@ -1425,7 +1426,7 @@ def _taraflar_sutunlari(dosya):
     # kendi sütununda hem taraf1'de aynı anda görünüyordu, "bütünlük yok"
     # şikayetinin asıl nedeni buydu). İcra dışı yargı türlerinde bu roller
     # hiç oluşmadığından bu satır etkisizdir (no-op).
-    baglar = [dt for dt in baglar if dt.rol not in ("alacakli", "borclu")]
+    baglar = [dt for dt in baglar if dt.rol not in ("alacakli", "borclu", "davaci", "davali")]
     parcalar = [f"{rol_etiket.get(dt.rol, dt.rol.title())}: {dt.taraf}" for dt in baglar]
 
     sirali = parcalar
@@ -1635,6 +1636,10 @@ def dosyalarim_db_listele(filtreler=None):
                 # ayırt edilemiyordu ("bütünlük yok").
                 "alacakli": ", ".join(str(dt.taraf) for dt in baglar if dt.rol == "alacakli"),
                 "borclu": ", ".join(str(dt.taraf) for dt in baglar if dt.rol == "borclu"),
+                # Hukuk Dosyalarım (hukuk_dosyalarim.py) için aynı türetme —
+                # rol="davaci"/"davali" olmayan yargı türlerinde boş kalır.
+                "davaci": ", ".join(str(dt.taraf) for dt in baglar if dt.rol == "davaci"),
+                "davali": ", ".join(str(dt.taraf) for dt in baglar if dt.rol == "davali"),
                 # DosyaTaraf.kesinlesme_durumu borçlu bazlı (kullanıcı isteği,
                 # 2026-08-03) — aynı dosyada birden fazla borçlu varsa her
                 # birinin AYRI değeri olabilir, bu yüzden "alacakli"/"borclu"
