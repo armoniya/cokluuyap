@@ -71,7 +71,13 @@ def _guvenli_ad(s, max_len=120):
 def _dosya_id_taze_coz(motor, birim_id, dosya_no, log):
     """(birim_id, dosya_no) -> TAZE dosyaId. Yargı türü/birimi kodu, verilen
     `birim_id`'den DB'deki `Birim` kaydı üzerinden çözülür (çağıran bunları
-    ayrıca bilmek zorunda kalmaz)."""
+    ayrıca bilmek zorunda kalmaz). Hem Açık (0) HEM Kapalı (1) `dosyaDurumKod`
+    ile dener (bkz. dosya_core._DURUM_KODLARI_TUMU'daki AYNI ikili kod) —
+    kullanıcı bulgusu (2026-08-28): "Ticaret Mahkemesi'nde dosya indirirken
+    'dosya bulunamadı' alıyorum" — sebebi, arama SADECE Açık (0) ile
+    yapılıyordu; kapalı/karara çıkmış bir dosya bu yüzden hiç bulunamıyordu
+    (bkz. baro_pulu_makbuzu_indiren.py::_dosya_id_coz'daki AYNI eksik desen —
+    o modül DOKUNULMAZ, burada yalnız kendi kopyamız düzeltildi)."""
     dosya_core._django_hazirla()
     from icra_models.models import Birim
     try:
@@ -82,13 +88,16 @@ def _dosya_id_taze_coz(motor, birim_id, dosya_no, log):
     if not m:
         return None
     values = {"dosyaYil": m.group(1), "dosyaNo": dosya_no}
-    payload = dosya_core.build_payload_genel(values, birim.yargi_turu, birim.turu2, 0, birim_id=birim_id)
-    veri = dosya_core._post_eszamanli_korumali(dosya_core._arka_plan_istek, motor, dosya_core.ENDPOINT, payload, log)
-    try:
-        kayitlar = veri[0] if isinstance(veri, list) else []
-        return kayitlar[0].get("dosyaId") if kayitlar else None
-    except Exception:
-        return None
+    for durum_kod in (0, 1):
+        payload = dosya_core.build_payload_genel(values, birim.yargi_turu, birim.turu2, durum_kod, birim_id=birim_id)
+        veri = dosya_core._post_eszamanli_korumali(dosya_core._arka_plan_istek, motor, dosya_core.ENDPOINT, payload, log)
+        try:
+            kayitlar = veri[0] if isinstance(veri, list) else []
+        except Exception:
+            kayitlar = []
+        if kayitlar:
+            return kayitlar[0].get("dosyaId")
+    return None
 
 
 def _evrak_ham_indir(motor, dosya_id, evrak_id, log_fn, timeout=90):
